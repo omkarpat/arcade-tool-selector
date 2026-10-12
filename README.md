@@ -6,6 +6,10 @@ I run Claude Code all day against an [Arcade](https://arcade.dev) MCP gateway co
 
 A local MCP proxy sits between Claude Code and the gateway. Every tool call is judged, before Arcade runs it, against the project's purpose (`project_prompt`) and what you actually asked for. The judge is OpenAI's Decisions API. Out-of-scope calls are denied or held for your approval in Claude Code's own permission prompt.
 
+This is a proof of concept on both axes:
+- **Placement.** The check belongs inside Arcade's gateway, as a hedge against the broad scopes humans grant. It runs locally here only because I can't change the gateway.
+- **The judge.** It makes one narrow allow-or-deny classification per call. That's a system-1 judgment, small enough to become a local in-memory model, which would let the whole system run air-gapped.
+
 - **Why it's built this way:** [WRITEUP.md](WRITEUP.md), the decisions and tradeoffs, and the feature I'd add to Arcade next.
 - **Where it's going:** [PLAN.md](PLAN.md), the full roadmap. Phases 1–3 are built; prompt-time tool selection is phase 4.
 
