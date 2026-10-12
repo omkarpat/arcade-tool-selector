@@ -162,7 +162,7 @@ uv run python evals/snapshot.py workspace      # snapshot your gateway's catalog
 uv run python evals/run.py                     # baselines on that snapshot
 ```
 
-`evals/datasets/workspace.yaml` holds labeled prompts. Each one lists the tools it needs; where several tools would each do, any one counts. Each selector is scored on four measures:
+`evals/datasets/tool_selection.yaml` is the tool-selection (relevance) dataset: labeled prompts. Each one lists the tools it needs; where several tools would each do, any one counts. Each selector is scored on four measures:
 - recall
 - prompts fully solved
 - precision

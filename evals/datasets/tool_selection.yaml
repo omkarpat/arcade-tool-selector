@@ -1,4 +1,5 @@
-# Selection eval v0 for the workspace gateway (evals/catalogs/workspace.json).
+# Tool-selection (relevance) dataset v0: which tools each prompt needs, for the workspace gateway
+# catalog (evals/catalogs/workspace.json). Scope/permission cases live in a separate dataset.
 #
 # needs: one entry per thing the request requires; each entry lists the tools that would satisfy it
 #        (any one counts). An empty list means the request needs no tool at all.

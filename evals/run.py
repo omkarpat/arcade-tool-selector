@@ -73,7 +73,7 @@ def score(name: str, select: Selector, cases: list[Case], tokens_per_tool: dict[
 
 def main() -> None:
     catalog_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "catalogs" / "workspace.json"
-    dataset_path = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "datasets" / "workspace.yaml"
+    dataset_path = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "datasets" / "tool_selection.yaml"
     catalog = Catalog.model_validate_json(catalog_path.read_text())
     cases = [Case.model_validate(c) for c in yaml.safe_load(dataset_path.read_text())]
 
