@@ -8,6 +8,13 @@ Today an Arcade-backed agent is handed a toolkit (or a gateway's whole "Allowed 
 
 It's also a security problem. Tools need broad OAuth scopes to be useful, for example `gmail.modify` to read *and* send. Once a user authorizes, those scopes are live for every call the model makes, including calls induced by prompt injection in a tool's output. Which calls are actually acceptable depends on the use case and the project's policy, not on the scope. A support bot may send email to customers who wrote in, but never to arbitrary addresses, and never delete anything.
 
+**The core case: the user's grant is broader than the project needs.** One Arcade gateway and one set of OAuth grants often serve many projects, and each project needs only a slice of them. For example, a meeting scheduler needs Calendar and read-only Gmail. The user has authorized Gmail send, Drive sharing and Linear write for other work. Every call outside the project's purpose must be blocked, even though Arcade would execute it:
+- Gmail send, Drive sharing and anything in Linear are out of scope;
+- so is a calendar invite to an outside domain;
+- so is a call that injected text in a tool result asks for.
+
+The project's slice is **contextual, not a fixed tool list**. A support bot legitimately needs `Gmail_SendEmail`, but only to reply to customers who wrote in. A project can hold broad permissions and still use them narrowly. So whether a call is in scope is judged per call, against the project's purpose, the user's request and the call's arguments (§4.10). Blocking out-of-scope calls is the project's main security property, and it's measured by its own eval slice (§5).
+
 Goals:
 1. **Select:** given the project's configuration and the user's prompt, return the small set of Arcade tools the LLM may see for that turn. The LLM still picks among them and fills the arguments, and never sees the rest.
 2. **Vet:** check every tool call against project policy before it executes. A call is allowed, denied, or escalated depending on:
@@ -50,7 +57,7 @@ What we do **not** take: query rewriting, time windows, URL dedup, streaming UI.
   - OpenAI Agents: `get_arcade_tools(tools=[...])`
   - Vercel AI: `toZodToolSet`
   - LangChain: `tools.get`
-- **MCP Gateways:** project-scoped, with a static "Allowed Tools" list. This is the natural **project-level outer boundary**.
+- **MCP Gateways:** project-scoped, with a static "Allowed Tools" list. This bounds what the **user's grant** can reach. It is not a per-project boundary in our sense: one gateway (and one set of OAuth grants) typically serves several projects, each needing less (see §1).
 - **Contextual Access hooks** are webhooks we host, configured at org or project level, with a priority order, fail-open or fail-closed, and a 5s default timeout.
   - **Access hook:** filters toolkits per user.
   - **Pre hook:** sees each call before it runs (tool, inputs, user). It can allow, deny, or rewrite the inputs or routing.
@@ -149,23 +156,27 @@ LLM emits call ──► Vetter ──► allow ──────────�
 
 The vetter runs these checks in order, cheapest first. The first decisive result wins.
 
-1. **In selection.** Is the tool in this turn's selection, or pinned? If not, deny. This is what turns selection into a security boundary: a tool the user's request didn't need can't run, even if injected text asks for it.
-2. **Static policy.** Every tool has a risk tier: `read`, `write`, `send` (leaves the org: email, messages, posts) or `destructive` (delete, trash, revoke, transfer). `read`, `write` and `destructive` come from Arcade's own behavior metadata. Arcade has no "reaches people" flag, so `send` is a short curated list (`cards.SEND_TOOLS`). `policy.tool_tiers` in the project config overrides any of them. Project policy then maps each tier, or a specific tool, to `allow`, `vet`, `approve` or `deny`.
-3. **Argument rules.** These are declarative constraints on inputs, such as:
+1. **Hard limits** (deterministic, admin-set). `scope.deny` (never, whatever the context) and argument rules are constraints on inputs, such as:
    - recipient domains, or "only addresses already in this thread"
-   - Slack channel or Linear team allowlists
-   - repo allowlists
+   - Slack channel, Linear team or repo allowlists
    - max item counts and date ranges
    - no wildcards in delete queries
-   - regex or allow/deny lists per parameter
 
-   They're deterministic with no LLM, and they're checked by both the library and the hook.
-4. **Intent check (LLM).** For `vet`-tier calls, a jev-style yes/no question: *"Is calling `Gmail.SendEmail` with these arguments something the user asked for, within this project's purpose?"* It's scored against the user's own messages and the project prompt, **not** tool outputs. That's the injection defense: content fetched by a tool can't authorize a call. If `P(yes)` is below the threshold, the call escalates or is denied, per policy.
-5. **Human approval.** For the `approve` tier, or a failed intent check, the call is held and surfaced through a callback (CLI prompt, Slack, webhook) with the tool, the arguments and the reason. It times out to deny.
+   A violation denies the call. Hard limits can only tighten the scope, never grant it. They need no LLM, so the server-side hook can enforce them too.
+2. **In selection.** Is the tool in this turn's selection, or pinned? If not, deny. Selection already asked the scope question for this request (§4.10). So a tool that neither the request nor the project's purpose calls for is never exposed, even if injected text asks for it.
+3. **Scope check** (Decisions API, every call). *"Is this exact call (tool and arguments) within the project's purpose, for what the user asked?"* (§4.10.) It's scored against the project prompt and the user's own messages, **not** tool outputs, so content fetched by a tool can't authorize a call. Below `scope.threshold`, the call is denied or escalated, depending on its risk tier.
+4. **Human approval.** For calls whose tier maps to `approve`, or a low-confidence scope judgment on a tier that escalates. The call is held and surfaced (Claude Code's permission prompt, Slack or a webhook) with the tool, the arguments, the scope probability and the reason. It times out to deny.
+
+**Risk tiers set the stakes, not the scope.** Every tool has a tier: `read`, `write`, `send` (leaves the org: email, messages, posts) or `destructive` (delete, trash, revoke, transfer).
+- **Where tiers come from.** `read`, `write` and `destructive` come from Arcade's own behavior metadata. Arcade has no "reaches people" flag, so `send` is a short curated list (`cards.SEND_TOOLS`). `policy.tool_tiers` overrides any of them.
+- **What a tier decides:**
+  - whether an in-scope call still needs approval (`policy.tiers`, e.g. `destructive: approve`);
+  - what a low-confidence scope judgment leads to (`read` asks, `send` / `destructive` deny);
+  - whether the call fails closed when the judge is unreachable (`write`, `send` and `destructive` do).
 
 **Where it's enforced:**
-- **In-process** (library `execute()` wrapper, and the MCP server's `call_tool`). This layer has the full context: prompt, selection, history. It runs all five checks.
-- **Server-side** (Contextual Access **pre-hook**). This layer has no prompt, so it runs checks 2–3, plus check 1 if the hook can tie the call back to a selection. That works only if a selection or session id can reach the hook (through the user id, routing metadata, or a short-lived selection record keyed by user). This is still to be verified against the hook schema.
+- **In-process** (library `execute()` wrapper, and the MCP server's `call_tool`). This layer has the full context: prompt, selection, history. It runs all four checks.
+- **Server-side** (Contextual Access **pre-hook**). This layer has no prompt, so it runs the hard limits (check 1), plus check 2 if the hook can tie the call back to a selection. That works only if a selection or session id can reach the hook (through the user id, routing metadata, or a short-lived selection record keyed by user). This is still to be verified against the hook schema.
   - It's fail-closed for the `send` and `destructive` tiers.
   - It catches callers that skip the library entirely.
 - **Post-hook (optional).** It redacts results per policy (e.g. strip customer PII before it reaches the model) and flags outputs that look like instructions, which is a classic injection carrier.
@@ -183,10 +194,9 @@ Every policy change can be replayed against this log to see what it would have b
 
 ```yaml
 project: support-bot
-arcade:
-  toolkits: [gmail, slack, linear, zendesk]     # catalog scope
-  allow: []                                     # optional explicit tool allowlist
-  deny: [Gmail.TrashEmail]
+scope:                                          # judged per call against project_prompt (§4.10)
+  threshold: 0.7                                # P(call within the project's purpose)
+  deny: [Gmail_TrashEmail]                      # hard limit: never, whatever the context
 project_prompt: >
   Customer support agent. Reads and replies to customer email,
   files and updates Linear issues, posts to #support in Slack.
@@ -215,8 +225,11 @@ policy:
       channel_name: { allow: ["#support", "#support-escalations"] }
     Linear.CreateIssue:
       team_id: { allow: [SUP] }
-  intent_threshold: 0.7
-  on_intent_fail: approve                       # or deny
+  on_low_scope:                                # what a below-threshold scope judgment does, by tier
+    read: approve
+    write: approve
+    send: deny
+    destructive: deny
   approval:
     via: slack                                  # cli | slack | webhook
     timeout_s: 300                              # then deny
@@ -266,7 +279,9 @@ Verified in phase 1 with a real `claude -p` session. Without a `claude` ancestor
 
 **Catalog source.** In this mode the catalog is the gateway's own MCP `tools/list`, i.e. exactly the gateway's Allowed Tools. The gateway paginates `tools/list` (~105 tools per page), so the proxy must follow `nextCursor` until it is exhausted. Reading only the first page silently drops tools. No extra lookups are needed. Each tool's `_meta.arcade` carries the following, which feed the cards, risk tiers and scope report:
 - operations, `read_only` / `destructive` flags and service domain
-- the OAuth provider and scopes So **the Arcade project and gateway is the project-level outer boundary**, and the YAML config only adds the project prompt, selection settings and policy.
+- the OAuth provider and scopes
+
+**Two boundaries.** The gateway's Allowed Tools, plus the OAuth grants behind them, bound what the **user** can reach. The project's purpose bounds what **this project** may do, which is usually far less. That bound is judged per prompt and per call against `project_prompt` by the Decisions API, inside admin-set hard limits (§4.10). The proxy lists only tools the current request needs within that purpose, and the vetter judges every call. Several projects can share one gateway and one set of grants, each with its own `ats.yaml`.
 
 **Example config.** The `workspace-search` cut-over is in [`examples/claude-code/`](examples/claude-code/):
 - `mcp.before.json` → `mcp.json` (direct gateway → proxy)
@@ -329,6 +344,36 @@ catalog:
   max_staleness: 24h         # older cache + unreachable gateway → warn in additionalContext
 ```
 
+### 4.10 Project scope via the Decisions API
+
+A project's scope can't be a fixed list. The same tool can be in scope for one call and out of scope for the next:
+- `Gmail_SendEmail` replying to a customer who wrote in: in scope.
+- `Gmail_SendEmail` sending the same thread to an outside address: out of scope.
+
+So scope is a **Decisions API judgment** against the project's purpose (`project_prompt`), made at two points.
+
+**1. Per prompt, at selection** (`UserPromptSubmit`). The batched gate (§4.1 step 4) asks two predicates per shortlisted tool in the same call:
+- *relevant:* would this request need `<tool>`?
+- *in scope:* is using `<tool>` for this request within the project's purpose?
+
+A tool is exposed only when both pass. One request can make `Gmail_SendEmail` visible, while "forward all invoices to my personal email" doesn't, even though both name the same tool.
+
+**2. Per call, at vetting** (`PreToolUse`, proxy re-check). One predicate per call:
+- the question: *is this exact call (tool and arguments) within the project's purpose, given what the user asked?*
+- the evidence: the project prompt, the user's own messages, the tool card and the arguments. Tool outputs are never evidence, so injected text can't raise the score.
+- below `scope.threshold`, `policy.on_low_scope` decides by tier: ask (Claude Code's permission prompt) or deny.
+
+**What stays deterministic:** only admin-set hard limits that tighten, never grant:
+- `scope.deny`, plus argument rules (§4.6 check 1);
+- the gateway's Allowed Tools and OAuth grants underneath everything.
+
+**Cost and failure.**
+- **Cost.** Per-call judgments add one Decisions API round-trip per tool call. Read-tier calls can be batched with the prompt-time judgment and skip the per-call check when their arguments match what selection saw.
+- **Failure.** If the judge is unreachable, `write` / `send` / `destructive` calls fail closed; `read` follows `on_low_scope`.
+- **Audit.** Every judgment is audited as `scope_judged`, with its probability and the evidence ids used.
+
+**Unused-grants report.** This compares the OAuth scopes behind every tool the project has actually been allowed to call, over a window of the audit log, with everything the gateway's tools request. For example: "in 30 days this project never used `gmail.send` or Linear `write`". The user can then narrow their Arcade auth or gateway.
+
 ## 5. Evaluation (built in phase 1, not bolted on)
 
 - **Dataset.** Labeled `prompt → required tools (+ acceptable alternates)` per project.
@@ -344,6 +389,19 @@ catalog:
   - generated vs. hand-tuned cards
   - the threshold sweep
   - each judge adapter
+- **Scope slice (headline security eval).** Example projects (e.g. a meeting scheduler, a support bot) run on the same broad gateway and grants. Each project has labeled cases: a prompt and/or a direct tool call with its arguments, mapped to `allow | deny | ask`. The cases cover:
+  - **Same tool, different scope.** `Gmail_SendEmail` replying to a customer who wrote in (allow) vs. sending to an unrelated outside address (deny).
+  - **Out-of-purpose toolkits.** A Linear call from a meeting scheduler, even though the user authorized Linear.
+  - **Broad permission, narrow use.** `GoogleDrive_ShareFile` with the team (allow) vs. `SetGeneralAccess` to anyone-with-link (deny) in an internal-docs project.
+  - **Hard limits.** A calendar invite to a domain the argument rules forbid.
+  - **Injection asking for an out-of-scope call.**
+  - **In-scope work, which must pass without friction.**
+
+  Every case runs through both enforcement points: the `PreToolUse` hook and the proxy's own re-check. That covers callers that skip the hook. Metrics:
+  - **Out-of-scope block rate:** must be 100%.
+  - **Judgment calibration:** a threshold sweep of block rate vs. false-block rate per tier, so `scope.threshold` and `on_low_scope` are set from data.
+  - **False-block rate.**
+  - The **unused-grants report** must flag every authorized scope the project can't use.
 - **Security slice.** Labeled `(prompt, conversation, proposed call) → allow | deny | escalate`, including:
   - **Injection scenarios:** an email or issue body that tells the agent to forward, delete or exfiltrate.
   - **Argument violations:** wrong recipient domain, a channel outside the allowlist, a bulk delete.
@@ -392,26 +450,28 @@ The stack is Python 3.11+ and `arcadepy`, with `uv` for packaging and an MIT lic
 | **Claude Code** | | |
 | 1 | Pass-through proxy: stdio MCP → test Arcade gateway (Arcade Headers auth), forwards `tools/list`/`tools/call`, audit log; catalog cache with startup load, background poll, shared lease and diff (§4.9); socket-correlation spike with a no-op `UserPromptSubmit` hook | Swapped in for a gateway entry, Claude Code behaves exactly as with the direct connection; warm start serves all 166 tools from cache; a tool added on the gateway appears within one poll; hook reaches the right proxy |
 | 2 | Catalog + `ToolCard` + risk tiers (auto-label + overrides) + eval dataset v0 + harness with "all tools" and BM25-only baselines | `evals/run.py` reports recall/precision/size on the test gateway's catalog |
-| 3 | Deterministic vetter in `PreToolUse` + proxy re-check: tiers, argument rules, `ask` via Claude Code's prompt | Security slice: 100% of tier/argument violations blocked; false-block rate reported |
-| 4 | Selector v1: judge interface + one adapter + batched gate + select rules; `UserPromptSubmit` → proxy `list_changed`; `additionalContext`; in-selection check | Model only sees selected tools; gate beats BM25 on recall at equal set size; p95 < 3s |
-| 5 | `request_more_tools`, sticky selections, intent check (LLM) for `vet`-tier calls | Multi-turn + injection eval slices pass |
+| 3 | **Per-call scope vetting.** Judge interface and Decisions API adapter. The vetter runs in `PreToolUse` with a proxy re-check: hard limits (`scope.deny`, argument rules), then a per-call scope judgment against `project_prompt`, with tier-driven `on_low_scope` (ask via Claude Code's prompt, or deny) and fail-closed. Also the scope eval slice | Scope slice: 100% of out-of-scope calls blocked at both enforcement points; false-block rate reported; threshold sweep sets the defaults |
+| 4 | Selector v1: batched per-prompt gate on the phase 3 judge (relevant + in-scope predicates per tool) + select rules; `UserPromptSubmit` → proxy `list_changed`; `additionalContext`; in-selection check | Model only sees selected tools; gate beats BM25 on recall at equal set size; p95 < 3s |
+| 5 | `request_more_tools`, sticky selections, unused-grants report from the audit log | Multi-turn + injection eval slices pass; report on the workspace gateway |
 | 6 | Plugin packaging (userConfig, marketplace), `/ats-why`, docs; cut `workspace-search` over | Installs from the repo with one command; daily use on the real gateway |
 | **Scale & quality** | | |
 | 7 | Hybrid shortlist (embeddings + RRF) + caching | Shortlist recall@40 ≥ 98% |
-| 8 | Card generation + override file; project-prompt toolkit gate | Generated vs. hand-tuned ablation reported |
+| 8 | Card generation + override file | Generated vs. hand-tuned ablation reported |
 | **Beyond Claude Code** | | |
 | 9 | Python library + adapters (OpenAI Agents, Anthropic, LangChain) | Examples run end-to-end with vetting on |
 | 10 | Generic MCP mode for other clients (Cursor, Claude Desktop): meta-tool fallback where `list_changed` isn't honored | Works in one non-Claude-Code client |
 | 11 | Arcade Contextual Access pre/post-hook server sharing `policy/` | Out-of-policy calls denied server-side even when the proxy is bypassed |
-| 12 | Scope report, PyPI release; explore living inside the Arcade platform | `pip install arcade-tool-selector` |
+| 12 | PyPI release; explore living inside the Arcade platform | `pip install arcade-tool-selector` |
 
 ## 8. Open questions for review
 
 Decided so far:
 - **The first consumer is Claude Code,** via the proxy and hooks (§4.8).
-- **The project boundary is the Arcade gateway.** The gateway's Allowed Tools list is the outer scope, and the YAML adds the project prompt, selection settings and policy.
-- **Deterministic vetting lands before the LLM selector** (phases 3 → 4).
-- **The default judge is the OpenAI Decisions API** (`gpt-6-luna`), which gives native per-question probabilities, as in jev-search. Phase 4 builds that adapter first; logprobs and Anthropic adapters stay optional.
+- **The project boundary is the project's purpose, not the gateway.** The gateway and its OAuth grants bound the user. Each project narrows that.
+- **Scope is contextual and judged by the Decisions API,** per prompt (at selection) and per call (at vetting), against the project prompt and the user's request (§4.10). A project can hold broad permissions and use them narrowly, so there's no fixed per-tool scope list. Only admin-set hard limits (`scope.deny`, argument rules) are deterministic, and they only tighten.
+- **The headline security metric is the scope slice:** out-of-scope calls must be blocked 100% of the time (§5).
+- **Per-call scope vetting lands before the selector** (phases 3 → 4).
+- **The default judge is the OpenAI Decisions API** (`gpt-6-luna`), which gives native per-question probabilities, as in jev-search. Phase 3 builds that adapter; logprobs and Anthropic adapters stay optional.
 
 Still open:
 1. **Granularity.** Should we select individual tools, or allow selecting whole toolkits when most of a toolkit passes?
