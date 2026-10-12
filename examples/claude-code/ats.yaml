@@ -22,21 +22,24 @@ selection:
   sticky_turns: 2
   request_more_tools: true
 
+scope:                                    # judged per call against project_prompt (PLAN §4.10)
+  threshold: 0.6                          # both scope answers (purpose, requested) must reach this
+  deny: [Gmail_TrashEmail]                # hard limit: never, whatever the context
+
 policy:
   tool_tiers:                             # tier overrides; defaults come from Arcade's metadata
     Linear_ArchiveIssue: destructive      # reversible in Linear, but treat as destructive here
-  tiers:                                  # default action per risk tier
-    read: allow
-    write: vet
-    send: vet
-    destructive: approve                  # Claude Code permission prompt
-  tools:                                  # per-tool overrides
-    Linear_ArchiveIssue: approve
-    Arcade_Registry_Create_Suggestion: approve
-    GoogleCalendar_UpdateEvent: vet
-  args:
+  approve: [destructive]                  # in-scope calls in these tiers still ask (Claude Code's prompt)
+  on_low_scope:                           # what an out-of-scope judgment does, by tier
+    read: ask
+    write: ask
+    send: deny
+    destructive: deny
+  args:                                   # hard limits on arguments (deny on violation)
     Linear_CreateIssue:
       team: { allow: [TEAM1, TEAM2] }     # your Linear team keys
+    GoogleCalendar_CreateEvent:
+      attendee_emails: { domains: [example.com] }
     GoogleCalendar_UpdateEvent:
       attendee_emails_to_add: { domains: [example.com] }
       send_notifications_to_attendees: { allow: [nobody, all] }   # never externalOnly
@@ -45,8 +48,6 @@ policy:
       emails: { domains: [example.com] }
     Gmail_TriageEmails:
       email_ids: { max_items: 20 }
-  intent_threshold: 0.7
-  on_intent_fail: approve
 
 judge:
   chain: [openai-decisions:gpt-6-luna]      # OpenAI Decisions API: native per-question probabilities

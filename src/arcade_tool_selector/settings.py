@@ -8,7 +8,7 @@ import yaml
 from dotenv import dotenv_values
 from pydantic import BaseModel, BeforeValidator, ConfigDict
 
-from arcade_tool_selector.cards import Tier
+from arcade_tool_selector.policy import PolicyConfig, ScopeConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -47,20 +47,15 @@ class CatalogConfig(BaseModel):
     max_staleness: Duration = 24 * 3600
 
 
-class PolicyConfig(BaseModel):
-    # Tier actions, per-tool actions and argument rules arrive with the vetter.
-    model_config = ConfigDict(extra="allow")
-
-    tool_tiers: dict[str, Tier] = {}  # gateway tool name → tier, overriding Arcade's metadata
-
-
 class ProjectConfig(BaseModel):
     # Selection and judge keys belong to later phases.
     model_config = ConfigDict(extra="allow")
 
     project: str
     server_name: str
+    project_prompt: str
     catalog: CatalogConfig = CatalogConfig()
+    scope: ScopeConfig = ScopeConfig()
     policy: PolicyConfig = PolicyConfig()
 
 

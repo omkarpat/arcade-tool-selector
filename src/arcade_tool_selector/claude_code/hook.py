@@ -1,35 +1,46 @@
 """Claude Code hook entrypoint: `ats-hook <user-prompt-submit|pre-tool-use|post-tool-use>`.
 
-Hooks stay thin and hold no secrets; the proxy does the work. In phase 1 the
-UserPromptSubmit hook only proves it reaches this session's proxy, and the tool
-hooks are no-ops, so Claude Code behaves exactly as without them.
+Hooks stay thin and hold no secrets; the proxy does the work.
+- UserPromptSubmit hands the user's prompt to the proxy: the evidence scope is judged against.
+- PreToolUse asks the proxy to vet the call. Deny and ask map to Claude Code's own decisions; allow
+  says nothing, so Claude Code's normal permission rules still apply (the vetter only tightens).
+  If the proxy can't be reached the call is blocked.
 """
 
 import json
-import socket
 import sys
 
 from arcade_tool_selector.audit import Audit
-from arcade_tool_selector.claude_code.runtime import PromptSubmitted, socket_path
+from arcade_tool_selector.claude_code.runtime import PromptSubmitted, VetRequest, ask_proxy
+from arcade_tool_selector.policy import Decision
 from arcade_tool_selector.settings import data_dir, load_env
 
-SOCKET_TIMEOUT = 5
+PROMPT_TIMEOUT = 5
+VET_TIMEOUT = 25  # under the hook's 30s timeout
 
 
 def user_prompt_submit(event: dict) -> None:
     root = data_dir()
-    path = socket_path(root)
-    request = PromptSubmitted(session_id=event.get("session_id"), prompt_id=event.get("prompt_id"), chars=len(event.get("prompt", "")))
+    message = PromptSubmitted(session_id=event.get("session_id"), prompt_id=event.get("prompt_id"), prompt=event.get("prompt", ""))
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
-            sock.settimeout(SOCKET_TIMEOUT)
-            sock.connect(str(path))
-            sock.sendall(request.model_dump_json().encode())
-            sock.shutdown(socket.SHUT_WR)
-            reply = sock.recv(65536).decode()
+        reply = ask_proxy(root, message, PROMPT_TIMEOUT)
     except OSError as e:
         reply = f"error: {e}"
-    Audit(root / "hook.log").write("prompt_submitted", socket=str(path), reply=reply)
+    Audit(root / "hook.log").write("prompt_submitted", reply=reply)
+
+
+def pre_tool_use(event: dict) -> None:
+    # MCP tools reach hooks as mcp__<server>__<tool>.
+    tool = event["tool_name"].split("__", 2)[2]
+    message = VetRequest(session_id=event.get("session_id"), tool=tool, arguments=event.get("tool_input") or {})
+    try:
+        decision = Decision.model_validate_json(ask_proxy(data_dir(), message, VET_TIMEOUT))
+    except Exception as e:
+        print(f"arcade-tool-selector could not vet {tool}: {e}. Blocked.", file=sys.stderr)
+        sys.exit(2)
+    if decision.action != "allow":
+        output = {"permissionDecision": decision.action, "permissionDecisionReason": f"arcade-tool-selector: {decision.reason}"}
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", **output}}))
 
 
 def main() -> None:
@@ -38,5 +49,7 @@ def main() -> None:
     event = json.load(sys.stdin)
     if command == "user-prompt-submit":
         user_prompt_submit(event)
-    elif command not in ("pre-tool-use", "post-tool-use"):
+    elif command == "pre-tool-use":
+        pre_tool_use(event)
+    elif command != "post-tool-use":
         sys.exit(f"unknown hook {command!r}")

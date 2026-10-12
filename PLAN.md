@@ -164,7 +164,11 @@ The vetter runs these checks in order, cheapest first. The first decisive result
 
    A violation denies the call. Hard limits can only tighten the scope, never grant it. They need no LLM, so the server-side hook can enforce them too.
 2. **In selection.** Is the tool in this turn's selection, or pinned? If not, deny. Selection already asked the scope question for this request (§4.10). So a tool that neither the request nor the project's purpose calls for is never exposed, even if injected text asks for it.
-3. **Scope check** (Decisions API, every call). *"Is this exact call (tool and arguments) within the project's purpose, for what the user asked?"* (§4.10.) It's scored against the project prompt and the user's own messages, **not** tool outputs, so content fetched by a tool can't authorize a call. Below `scope.threshold`, the call is denied or escalated, depending on its risk tier.
+3. **Scope check** (Decisions API, every call). It asks two predicates (§4.10):
+   - `within_purpose`: does the project's purpose cover this call?
+   - `requested`: do the user's own messages ask for it?
+
+   They're scored against the project prompt, the user's own messages and today's date, **not** tool outputs, so content fetched by a tool can't authorize a call. Outside the purpose, the tier's `on_low_scope` applies (send and destructive deny). Inside the purpose but unclearly requested, the call asks.
 4. **Human approval.** For calls whose tier maps to `approve`, or a low-confidence scope judgment on a tier that escalates. The call is held and surfaced (Claude Code's permission prompt, Slack or a webhook) with the tool, the arguments, the scope probability and the reason. It times out to deny.
 
 **Risk tiers set the stakes, not the scope.** Every tool has a tier: `read`, `write`, `send` (leaves the org: email, messages, posts) or `destructive` (delete, trash, revoke, transfer).
@@ -358,10 +362,14 @@ So scope is a **Decisions API judgment** against the project's purpose (`project
 
 A tool is exposed only when both pass. One request can make `Gmail_SendEmail` visible, while "forward all invoices to my personal email" doesn't, even though both name the same tool.
 
-**2. Per call, at vetting** (`PreToolUse`, proxy re-check). One predicate per call:
-- the question: *is this exact call (tool and arguments) within the project's purpose, given what the user asked?*
+**2. Per call, at vetting** (`PreToolUse`, proxy re-check). Two predicates per call, kept separate because a single combined question let "the user asked" outweigh "outside the purpose" (phase 3 eval):
+- `within_purpose`: *does the project's purpose cover this action, with these arguments?* It ignores the request. Supporting read-only lookups in covered apps count as covered.
+- `requested`: *do the user's own messages ask for this exact call?*
 - the evidence: the project prompt, the user's own messages, the tool card and the arguments. Tool outputs are never evidence, so injected text can't raise the score.
-- below `scope.threshold`, `policy.on_low_scope` decides by tier: ask (Claude Code's permission prompt) or deny.
+- the outcome by result:
+  - `within_purpose` below `scope.threshold` (default 0.6, from the sweep): `policy.on_low_scope` decides by tier, ask (Claude Code's permission prompt) or deny.
+  - `requested` below the threshold: always ask. The judge's doubt about an in-purpose call goes to a human; it's never silently allowed or hard-denied.
+- the judge also gets today's date, so a request like "tomorrow" can be checked against date arguments.
 
 **What stays deterministic:** only admin-set hard limits that tighten, never grant:
 - `scope.deny`, plus argument rules (§4.6 check 1);
