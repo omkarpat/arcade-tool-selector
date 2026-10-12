@@ -30,7 +30,7 @@ HERE = Path(__file__).parent
 
 class Project(BaseModel):
     prompt: str
-    deny: list[str] = []
+    scope: ScopeConfig = ScopeConfig()
     tool_tiers: dict[str, Tier] = {}
     args: dict[str, dict[str, ArgRule]] = {}
 
@@ -75,7 +75,7 @@ def blocked(action: Action) -> bool:
 async def run(catalog: Catalog, projects: dict[str, Project], cases: list[Case]) -> list[Outcome]:
     judge = DecisionsJudge()
     vetters = {
-        name: Vetter(ScopeConfig(deny=p.deny), PolicyConfig(tool_tiers=p.tool_tiers, args=p.args), build_cards(catalog, p.tool_tiers), judge)
+        name: Vetter(p.scope, PolicyConfig(tool_tiers=p.tool_tiers, args=p.args), build_cards(catalog, p.tool_tiers), judge)
         for name, p in projects.items()
     }
     outcomes: list[Outcome | None] = [None] * len(cases)
@@ -139,11 +139,11 @@ def main() -> None:
     judged = [o for o in outcomes if o.decision.probability is not None]
     fixed = [(o.case.expect, o.decision.action) for o in outcomes if o.decision.probability is None]
     print("threshold sweep  blocked  friction  exact")
-    for threshold in (0.5, 0.6, 0.7, 0.8, 0.9):
+    for threshold in (0.5, 0.6, 0.7, 0.8, 0.85, 0.9):
         vetter = Vetter(ScopeConfig(threshold=threshold), PolicyConfig(), [], None)
         swept = [(o.case.expect, vetter.decide(o.tier, o.decision.answers).action) for o in judged]
         block, friction, exact = rates(swept + fixed)
-        print(f"  {threshold:.1f}            {block:>6.0%}  {friction:>8.0%}  {exact:>5.0%}")
+        print(f"  {threshold:<4}            {block:>6.0%}  {friction:>8.0%}  {exact:>5.0%}")
 
 
 if __name__ == "__main__":

@@ -49,7 +49,21 @@ I built the scope eval before tuning anything: 40 labelled cases across three pr
 - **Date, not time.** "Tomorrow" can only be checked against date arguments if the judge knows today, so I added the date. My first version included the clock time, which changed the input every minute and produced results that moved between runs. Date only fixed that.
 - **Validate the dataset against the real schemas.** That check caught two of my own labelling bugs, including a YAML comma that silently split one argument into two.
 
-Current numbers: **100% of out-of-scope calls blocked, 6% of in-scope calls held (one, as an ask), 98% exact.** The threshold sweep holds 100% blocking from 0.5 to 0.8. Forty hand-written cases is a small, author-labelled set; it's a regression net, not proof. The next step is labelling real decisions from the audit log.
+Current numbers, over 54 cases and 4 projects, at the default threshold of 0.85: **100% of out-of-scope calls blocked, 21% of in-scope calls held (mostly as approval prompts), 87% exact.** I chose 0.85 deliberately: the sweep holds 100% blocking from 0.5 to 0.9, and a lower bar only buys less friction (8% held at 0.6). For a security gate in front of broad grants, I'd rather the agent ask than guess. The disclosure check runs on its own, stricter threshold (0.5), because raising a shared threshold would have loosened it. Fifty-four hand-written cases is a small, author-labelled set; it's a regression net, not proof. The next step is labelling real decisions from the audit log.
+
+## Roles: Arcade's projects as RBAC, the vetter as the data layer
+
+I set up three Arcade projects as roles: a read-only Workspace Search, a Meeting Scheduler, and a customer-facing Support Bot. That showed where Arcade's native controls end.
+
+**What Arcade already gives each project:**
+- its own gateway, whose tool allow-list is the role's tool permissions;
+- its own API key. A key from another project gets a 403, which is a real isolation boundary.
+
+That covers tools, and to a degree actions. It doesn't cover data. "Reply only to meeting emails" and "never tell a customer about our internal tickets" depend on what's in the call, not which tool it is.
+
+**So the vetter adds the two layers Arcade can't express:**
+- **Actions:** a deterministic `allow_tiers` hard limit. Workspace Search is read-only even though its gateway keeps every tool.
+- **Data:** the per-call purpose check, plus a disclosure predicate for customer-facing roles. On any call that reaches people, the judge also asks whether the content reveals internal details to someone outside the organization's domains. In the eval, it caught every leaking reply: an internal ticket with #eng discussion and another customer's name, an internal discount floor, and an internal roadmap link. The honest status update still went through.
 
 ## Smaller decisions
 

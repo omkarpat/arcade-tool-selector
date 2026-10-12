@@ -32,6 +32,14 @@ SCOPE_QUESTIONS = {
     ),
 }
 
+# Asked only for send-tier calls in projects with `protect_internal`: the data-level rule of a customer-facing role.
+DISCLOSURE_QUESTION = (
+    "Does this call send internal organization details to anyone outside the organization? Internal details include "
+    "internal tickets or their discussion, internal chat, other customers' information, employee information, "
+    "roadmap, internal pricing, and internal links. Sharing the outside person's own case, status or public "
+    "information is not internal."
+)
+
 
 class ArgRule(BaseModel):
     allow: list[str] | None = None  # every value must be one of these
@@ -53,8 +61,12 @@ class ArgRule(BaseModel):
 
 
 class ScopeConfig(BaseModel):
-    threshold: float = 0.6  # from the scope eval sweep (evals/scope.py)
+    threshold: float = 0.85  # purpose and requested must both reach this; lower answers ask or deny
+    disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     deny: list[str] = []
+    allow_tiers: list[Tier] | None = None  # hard limit on actions, e.g. [read] for a read-only role; None = all
+    org_domains: list[str] = []  # who counts as inside the organization
+    protect_internal: bool = False  # send-tier calls must not reveal internal details to people outside org_domains
 
 
 class PolicyConfig(BaseModel):
@@ -71,7 +83,7 @@ class Evidence(BaseModel):
 
 class Decision(BaseModel):
     action: Action
-    check: Literal["unknown_tool", "scope_deny", "arg_rule", "scope", "judge_unavailable", "approval", "in_scope"]
+    check: Literal["unknown_tool", "scope_deny", "tier_limit", "arg_rule", "disclosure", "scope", "judge_unavailable", "approval", "in_scope"]
     reason: str
     probability: float | None = None  # the deciding (lowest) scope answer
     answers: dict[str, float] = {}  # every scope answer: within_purpose, requested
@@ -104,6 +116,9 @@ class Vetter:
             return Decision(action="deny", check="unknown_tool", reason=f"{tool} is not a tool on this gateway.")
         if tool in self.scope.deny:
             return Decision(action="deny", check="scope_deny", reason=f"{tool} is never allowed in this project.")
+        tier = self.cards[tool].tier or "write"
+        if self.scope.allow_tiers is not None and tier not in self.scope.allow_tiers:
+            return Decision(action="deny", check="tier_limit", reason=f"This project only allows {', '.join(self.scope.allow_tiers)} calls; {tool} is {tier}.")
         for param, rule in self.policy.args.get(tool, {}).items():
             if param in arguments and (problem := rule.violation(arguments[param])):
                 return Decision(action="deny", check="arg_rule", reason=f"{tool}.{param}: {problem}.")
@@ -114,11 +129,17 @@ class Vetter:
             return limited
         card = self.cards[tool]
         tier = card.tier or "write"
+        questions = dict(SCOPE_QUESTIONS)
+        if self.scope.protect_internal and tier == "send":
+            questions["discloses_internal"] = DISCLOSURE_QUESTION
         try:
-            answers = await self.judge.predicates(_scope_input(card, arguments, evidence), SCOPE_QUESTIONS)
+            answers = await self.judge.predicates(_scope_input(card, arguments, evidence, self.scope.org_domains), questions)
         except Exception as e:
             fallback = "deny" if tier != "read" else self.policy.on_low_scope["read"]
             return Decision(action=fallback, check="judge_unavailable", reason=f"Scope judge unavailable ({type(e).__name__}); {tier} calls fail closed.")
+        disclosure = answers.pop("discloses_internal", 0.0)
+        if disclosure >= self.scope.disclosure_threshold:
+            return Decision(action="deny", check="disclosure", reason=f"Would reveal internal details outside the organization (p={disclosure:.2f}).", probability=disclosure, answers={**answers, "discloses_internal": disclosure})
         return self.decide(tier, answers)
 
     def decide(self, tier: Tier, answers: dict[str, float], threshold: float | None = None) -> Decision:
@@ -138,14 +159,16 @@ class Vetter:
             return Decision(action="ask", check="approval", reason=f"In scope (p={lowest:.2f}), but {tier} calls need approval.", probability=lowest, answers=answers)
         return Decision(action="allow", check="in_scope", reason=f"In scope (p={lowest:.2f}).", probability=lowest, answers=answers)
 
-def _scope_input(card: ToolCard, arguments: dict, evidence: Evidence) -> str:
+def _scope_input(card: ToolCard, arguments: dict, evidence: Evidence, org_domains: list[str]) -> str:
     asked = "\n".join(f"- {m}" for m in evidence.user_messages[-10:]) or "- (no user message yet)"
     # Requests like "tomorrow" can only be checked against arguments with today's date in hand.
     # Date only: a clock time would change the input (and the answers) minute to minute.
     today = datetime.now().astimezone()
+    org = f"The organization's domains: {', '.join(org_domains)}\n\n" if org_domains else ""
     return (
         f"Today: {today:%A %Y-%m-%d} ({today.tzname()})\n\n"
         f"Project purpose:\n{evidence.project_prompt.strip()}\n\n"
+        f"{org}"
         f"What the user asked, in their own messages (oldest first):\n{asked}\n\n"
         f"Proposed tool call: {card.qualified_name} ({card.tier} tier)\n"
         f"What the tool does: {card.description[:600]}\n"

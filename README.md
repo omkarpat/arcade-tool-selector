@@ -125,29 +125,58 @@ Tiers come from Arcade's tool metadata:
 
 `policy.tool_tiers` overrides any of them. If the judge is unreachable, write, send and destructive calls fail closed. The proxy also re-checks every call itself, so a call that skips the hook is vetted too.
 
+## Roles: one Arcade project per role
+
+Treat each Arcade project as a role, with permissions at three levels:
+
+| Level | What it controls | Enforced by |
+|---|---|---|
+| Tools | which tools the role can call at all | the project's **gateway allow-list**, plus its **project API key**: Arcade rejects a key from another project with a 403 |
+| Actions | read vs. create, update, delete | `scope.allow_tiers` (deterministic), plus the gateway allow-list |
+| Data | which records, recipients and content | `policy.args` (e.g. Linear team `SUP`, Slack `#support`), the per-call purpose check, and `scope.protect_internal` |
+
+[`examples/roles/`](examples/roles/) has three roles:
+
+| Role | Gateway tools | Rules in the vetter |
+|---|---|---|
+| **Workspace Search** | all | read-only: `allow_tiers: [read]` denies every write, send or delete without asking the judge |
+| **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | the purpose check lets replies through only when they're about meetings; invites stay inside the org |
+| **Support Bot** | Gmail read and reply, Linear tickets, Slack | `protect_internal` adds a third question to every send: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. Plus `SUP`-team and `#support`-only rules. |
+
+**To run a role:**
+1. Give it its own `.env`: that project's API key, plus its gateway URL.
+2. Point the proxy at that env file and the role's config:
+
+   ```sh
+   ATS_ENV_FILE=.env.support-bot ATS_CONFIG=examples/roles/support-bot.yaml uv run ats-proxy
+   ```
+3. In Claude Code, register it as that role's MCP server, with the same two variables in the server's `env`.
+
 ## Evals
 
 Both evals run against a local snapshot of your gateway's catalog (gitignored). Create it first:
 
 ```sh
 uv run python evals/snapshot.py               # every tools/list page from your gateway → evals/catalogs/workspace.json
-uv run python evals/scope.py                  # scope decisions, live judge (40 cases, ~10s)
+uv run python evals/scope.py                  # scope decisions, live judge (54 cases, ~15s)
 uv run python evals/run.py                    # tool-selection baselines (offline)
 ```
 
-**Scope** (`evals/datasets/scope_decisions.yaml`). Three projects share one broad gateway: a meeting scheduler, a support bot and an internal-docs assistant. Each case is a project, your messages and a proposed call, labelled allow / ask / deny. The cases cover:
+**Scope** (`evals/datasets/scope_decisions.yaml`). Four projects share one broad gateway: a read-only workspace search, a meeting scheduler, a customer-facing support bot and an internal-docs assistant. Each case is a project, your messages and a proposed call, labelled allow / ask / deny. The cases cover:
 - the same tool in and out of scope
 - toolkits outside the project's purpose
 - broad permissions used narrowly
 - injection
 - hard limits
 - supporting lookups
+- role limits (writes from a read-only role, non-meeting replies)
+- internal-detail disclosure to customers
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 6% (1 case, held as ask) | 98% | p50 0.25s · p95 0.34s |
+| **100%** | 21% (5 cases: 4 held as ask, 1 denied) | 87% | p50 0.25s · p95 0.35s |
 
-A threshold sweep (0.5–0.8) keeps 100% blocked throughout. 0.6 is the default.
+These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
 
 **Selection** (`evals/datasets/tool_selection.yaml`). 103 prompts, each labelled with the tools it needs. This is the baseline phase 4's prompt-time selector has to beat:
 

@@ -357,7 +357,7 @@ A tool is exposed only when both pass. One request can make `Gmail_SendEmail` vi
 - `requested`: *do the user's own messages ask for this exact call?*
 - the evidence: the project prompt, the user's own messages, the tool card and the arguments. Tool outputs are never evidence, so injected text can't raise the score.
 - the outcome by result:
-  - `within_purpose` below `scope.threshold` (default 0.6, from the sweep): `policy.on_low_scope` decides by tier, ask (Claude Code's permission prompt) or deny.
+  - `within_purpose` below `scope.threshold` (default 0.85: strict by choice; the sweep holds 100% blocking from 0.5 to 0.9, and lower values only reduce friction): `policy.on_low_scope` decides by tier, ask (Claude Code's permission prompt) or deny.
   - `requested` below the threshold: always ask. The judge's doubt about an in-purpose call goes to a human; it's never silently allowed or hard-denied.
 - the judge also gets today's date, so a request like "tomorrow" can be checked against date arguments.
 
