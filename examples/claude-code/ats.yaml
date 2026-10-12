@@ -23,7 +23,7 @@ selection:
   request_more_tools: true
 
 scope:                                    # judged per call against project_prompt (PLAN §4.10)
-  threshold: 0.6                          # both scope answers (purpose, requested) must reach this
+  threshold: 0.85                         # both scope answers (purpose, requested) must reach this
   deny: [Gmail_TrashEmail]                # hard limit: never, whatever the context
 
 policy:

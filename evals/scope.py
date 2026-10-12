@@ -139,11 +139,11 @@ def main() -> None:
     judged = [o for o in outcomes if o.decision.probability is not None]
     fixed = [(o.case.expect, o.decision.action) for o in outcomes if o.decision.probability is None]
     print("threshold sweep  blocked  friction  exact")
-    for threshold in (0.5, 0.6, 0.7, 0.8, 0.9):
+    for threshold in (0.5, 0.6, 0.7, 0.8, 0.85, 0.9):
         vetter = Vetter(ScopeConfig(threshold=threshold), PolicyConfig(), [], None)
         swept = [(o.case.expect, vetter.decide(o.tier, o.decision.answers).action) for o in judged]
         block, friction, exact = rates(swept + fixed)
-        print(f"  {threshold:.1f}            {block:>6.0%}  {friction:>8.0%}  {exact:>5.0%}")
+        print(f"  {threshold:<4}            {block:>6.0%}  {friction:>8.0%}  {exact:>5.0%}")
 
 
 if __name__ == "__main__":

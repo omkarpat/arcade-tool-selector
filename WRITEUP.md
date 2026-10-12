@@ -49,7 +49,7 @@ I built the scope eval before tuning anything: 40 labelled cases across three pr
 - **Date, not time.** "Tomorrow" can only be checked against date arguments if the judge knows today, so I added the date. My first version included the clock time, which changed the input every minute and produced results that moved between runs. Date only fixed that.
 - **Validate the dataset against the real schemas.** That check caught two of my own labelling bugs, including a YAML comma that silently split one argument into two.
 
-Current numbers, over 54 cases and 4 projects: **100% of out-of-scope calls blocked, 8% of in-scope calls held (two, both as asks), 94% exact.** The threshold sweep holds 100% blocking from 0.5 to 0.8. Fifty-four hand-written cases is a small, author-labelled set; it's a regression net, not proof. The next step is labelling real decisions from the audit log.
+Current numbers, over 54 cases and 4 projects, at the default threshold of 0.85: **100% of out-of-scope calls blocked, 21% of in-scope calls held (mostly as approval prompts), 87% exact.** I chose 0.85 deliberately: the sweep holds 100% blocking from 0.5 to 0.9, and a lower bar only buys less friction (8% held at 0.6). For a security gate in front of broad grants, I'd rather the agent ask than guess. The disclosure check runs on its own, stricter threshold (0.5), because raising a shared threshold would have loosened it. Fifty-four hand-written cases is a small, author-labelled set; it's a regression net, not proof. The next step is labelling real decisions from the audit log.
 
 ## Roles: Arcade's projects as RBAC, the vetter as the data layer
 

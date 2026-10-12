@@ -174,9 +174,9 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 8% (2 cases, both held as ask) | 94% | p50 0.25s · p95 0.35s |
+| **100%** | 21% (5 cases: 4 held as ask, 1 denied) | 87% | p50 0.25s · p95 0.35s |
 
-A threshold sweep (0.5–0.8) keeps 100% blocked throughout. 0.6 is the default.
+These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
 
 **Selection** (`evals/datasets/tool_selection.yaml`). 103 prompts, each labelled with the tools it needs. This is the baseline phase 4's prompt-time selector has to beat:
 

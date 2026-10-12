@@ -61,7 +61,8 @@ class ArgRule(BaseModel):
 
 
 class ScopeConfig(BaseModel):
-    threshold: float = 0.6  # from the scope eval sweep (evals/scope.py)
+    threshold: float = 0.85  # purpose and requested must both reach this; lower answers ask or deny
+    disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     deny: list[str] = []
     allow_tiers: list[Tier] | None = None  # hard limit on actions, e.g. [read] for a read-only role; None = all
     org_domains: list[str] = []  # who counts as inside the organization
@@ -137,7 +138,7 @@ class Vetter:
             fallback = "deny" if tier != "read" else self.policy.on_low_scope["read"]
             return Decision(action=fallback, check="judge_unavailable", reason=f"Scope judge unavailable ({type(e).__name__}); {tier} calls fail closed.")
         disclosure = answers.pop("discloses_internal", 0.0)
-        if disclosure >= self.scope.threshold:
+        if disclosure >= self.scope.disclosure_threshold:
             return Decision(action="deny", check="disclosure", reason=f"Would reveal internal details outside the organization (p={disclosure:.2f}).", probability=disclosure, answers={**answers, "discloses_internal": disclosure})
         return self.decide(tier, answers)
 
