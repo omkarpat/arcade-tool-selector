@@ -62,7 +62,12 @@ I set up three Arcade projects as roles: a read-only Workspace Search, a Meeting
 That covers tools, and to a degree actions. It doesn't cover data. "Reply only to meeting emails" and "never tell a customer about our internal tickets" depend on what's in the call, not which tool it is.
 
 **So the vetter adds the two layers Arcade can't express:**
-- **Actions:** a deterministic `allow_tiers` hard limit, with per-tool exceptions in `allow` and a `deny` that always wins. Workspace Search reads everything and writes only Linear issues, never archiving or deleting, even though its gateway keeps every tool. This mattered: Arcade classes `ArchiveProject` as a plain update, so "Linear writes" without an explicit list would have let archiving through.
+- **Actions, from the description.** Workspace Search "reads everything, can create and update Linear issues, never deletes or archives anything". That's the whole policy. My first version encoded it as tool lists, an allow-list of Linear issue tools plus a deny-list of archive and delete tools. Running the same cases with only the description gave identical blocking:
+  - issue writes allowed (purpose 0.95–0.99);
+  - archive-issue, archive-project and a Drive rename judged outside the purpose (0.00–0.01);
+  - every out-of-scope call blocked.
+
+  The lists were duplicate policy that would drift. Arcade classes `ArchiveProject` as a plain update, so a list built from tool metadata would have missed it; the description didn't. Deterministic limits (`allow_tiers`, `scope.deny`, argument rules) remain available as a backstop, but they aren't the mechanism.
 - **Data:** the per-call purpose check, plus a disclosure predicate for customer-facing roles. On any call that reaches people, the judge also asks whether the content reveals internal details to someone outside the organization's domains. In the eval, it caught every leaking reply: an internal ticket with #eng discussion and another customer's name, an internal discount floor, and an internal roadmap link. The honest status update still went through.
 
 ## Smaller decisions

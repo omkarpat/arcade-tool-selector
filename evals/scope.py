@@ -14,6 +14,7 @@ import time
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
+from typing import Literal
 
 import anyio
 import yaml
@@ -32,6 +33,7 @@ class Project(BaseModel):
     prompt: str
     scope: ScopeConfig = ScopeConfig()
     tool_tiers: dict[str, Tier] = {}
+    on_low_scope: dict[Tier, Literal["ask", "deny"]] = PolicyConfig().on_low_scope
     args: dict[str, dict[str, ArgRule]] = {}
 
 
@@ -72,12 +74,15 @@ def blocked(action: Action) -> bool:
     return action != "allow"
 
 
-async def run(catalog: Catalog, projects: dict[str, Project], cases: list[Case]) -> list[Outcome]:
+def make_vetters(catalog: Catalog, projects: dict[str, Project]) -> dict[str, Vetter]:
     judge = DecisionsJudge()
-    vetters = {
-        name: Vetter(p.scope, PolicyConfig(tool_tiers=p.tool_tiers, args=p.args), build_cards(catalog, p.tool_tiers), judge)
+    return {
+        name: Vetter(p.scope, PolicyConfig(tool_tiers=p.tool_tiers, on_low_scope=p.on_low_scope, args=p.args), build_cards(catalog, p.tool_tiers), judge)
         for name, p in projects.items()
     }
+
+
+async def run(vetters: dict[str, Vetter], projects: dict[str, Project], cases: list[Case]) -> list[Outcome]:
     outcomes: list[Outcome | None] = [None] * len(cases)
 
     async def one(i: int, case: Case) -> None:
@@ -121,7 +126,8 @@ def main() -> None:
     if bad := sorted({f"{c.call.tool}.{a}" for c in cases for a in c.call.args if a not in params[c.call.tool]}):
         sys.exit(f"dataset passes arguments the tools don't take: {bad}")
 
-    outcomes = anyio.run(run, catalog, projects, cases)
+    vetters = make_vetters(catalog, projects)
+    outcomes = anyio.run(run, vetters, projects, cases)
 
     print(f"{dataset_path.name}: {len(cases)} cases over {len(projects)} projects\n")
     for o in outcomes:
@@ -135,13 +141,12 @@ def main() -> None:
     latencies = sorted(o.seconds for o in outcomes if o.decision.probability is not None)
     print(f"judge latency per call: p50 {statistics.median(latencies):.2f}s · p95 {latencies[int(len(latencies) * 0.95) - 1]:.2f}s\n")
 
-    # Hard-limit and judge-failure decisions don't move with the threshold.
-    judged = [o for o in outcomes if o.decision.probability is not None]
-    fixed = [(o.case.expect, o.decision.action) for o in outcomes if o.decision.probability is None]
+    # Hard limits, judge failures and disclosure (its own threshold) don't move with the scope threshold.
+    judged = [o for o in outcomes if o.decision.probability is not None and o.decision.check != "disclosure"]
+    fixed = [(o.case.expect, o.decision.action) for o in outcomes if o not in judged]
     print("threshold sweep  blocked  friction  exact")
     for threshold in (0.5, 0.6, 0.7, 0.8, 0.85, 0.9):
-        vetter = Vetter(ScopeConfig(threshold=threshold), PolicyConfig(), [], None)
-        swept = [(o.case.expect, vetter.decide(o.tier, o.decision.answers).action) for o in judged]
+        swept = [(o.case.expect, vetters[o.case.project].decide(o.tier, o.decision.answers, threshold).action) for o in judged]
         block, friction, exact = rates(swept + fixed)
         print(f"  {threshold:<4}            {block:>6.0%}  {friction:>8.0%}  {exact:>5.0%}")
 

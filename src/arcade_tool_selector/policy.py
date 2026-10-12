@@ -65,7 +65,6 @@ class ScopeConfig(BaseModel):
     disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     deny: list[str] = []
     allow_tiers: list[Tier] | None = None  # hard limit on actions, e.g. [read] for a read-only role; None = all
-    allow: list[str] = []  # tools allowed despite allow_tiers, e.g. one toolkit's writes in a read-only role
     org_domains: list[str] = []  # who counts as inside the organization
     protect_internal: bool = False  # send-tier calls must not reveal internal details to people outside org_domains
 
@@ -103,7 +102,7 @@ class Vetter:
 
     def config_problems(self) -> list[str]:
         """Rules naming tools or parameters the catalog doesn't have never fire: surface them."""
-        problems = [f"scope.{field} names unknown tool {t}" for field in ("deny", "allow") for t in getattr(self.scope, field) if t not in self.cards]
+        problems = [f"scope.deny names unknown tool {t}" for t in self.scope.deny if t not in self.cards]
         for tool, rules in self.policy.args.items():
             if tool not in self.cards:
                 problems.append(f"policy.args names unknown tool {tool}")
@@ -118,7 +117,7 @@ class Vetter:
         if tool in self.scope.deny:
             return Decision(action="deny", check="scope_deny", reason=f"{tool} is never allowed in this project.")
         tier = self.cards[tool].tier or "write"
-        if self.scope.allow_tiers is not None and tier not in self.scope.allow_tiers and tool not in self.scope.allow:
+        if self.scope.allow_tiers is not None and tier not in self.scope.allow_tiers:
             return Decision(action="deny", check="tier_limit", reason=f"This project only allows {', '.join(self.scope.allow_tiers)} calls; {tool} is {tier}.")
         for param, rule in self.policy.args.get(tool, {}).items():
             if param in arguments and (problem := rule.violation(arguments[param])):

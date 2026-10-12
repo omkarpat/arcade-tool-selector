@@ -132,14 +132,14 @@ Treat each Arcade project as a role, with permissions at three levels:
 | Level | What it controls | Enforced by |
 |---|---|---|
 | Tools | which tools the role can call at all | the project's **gateway allow-list**, plus its **project API key**: Arcade rejects a key from another project with a 403 |
-| Actions | read vs. create, update, delete | `scope.allow_tiers` with per-tool exceptions in `scope.allow` (deterministic), plus the gateway allow-list |
+| Actions | read vs. create, update, delete | the project description, judged per call; optionally `scope.allow_tiers` as a deterministic backstop |
 | Data | which records, recipients and content | `policy.args` (e.g. Linear team `SUP`, Slack `#support`), the per-call purpose check, and `scope.protect_internal` |
 
 [`examples/roles/`](examples/roles/) has three roles:
 
 | Role | Gateway tools | Rules in the vetter |
 |---|---|---|
-| **Workspace Search** | all | reads everything and writes only Linear issues: `allow_tiers: [read]`, plus `allow` for issue create, update, transition and comment. Archive and delete tools are in `deny`. Every other write, send or delete is refused without asking the judge. |
+| **Workspace Search** | all | **description only**: "reads everything; can create and update Linear issues; never deletes or archives anything". The judge allows issue writes and judges archive, delete and other writes as outside the purpose. `on_low_scope.write: deny` turns those writes into denials. No tool lists. |
 | **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | the purpose check lets replies through only when they're about meetings; invites stay inside the org |
 | **Support Bot** | Gmail read and reply, Linear tickets, Slack | `protect_internal` adds a third question to every send: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. Plus `SUP`-team and `#support`-only rules. |
 

@@ -112,10 +112,3 @@ def test_disclosure_checked_only_on_sends_of_protected_projects():
     assert vet(leaky, "Linear_CreateIssue", scope=protected).action == "allow"  # write: not asked
     assert vet(leaky, "GoogleCalendar_CreateEvent").action == "allow"  # project not protected
     assert [q for q in leaky.asked if "discloses_internal" in q] == ["within_purpose,requested,discloses_internal"]
-
-
-def test_allow_lists_tools_past_the_tier_limit_but_deny_still_wins():
-    scope = ScopeConfig(allow_tiers=["read"], allow=["Linear_CreateIssue", "Gmail_TrashEmail"], deny=["Gmail_TrashEmail"])
-    assert vet(Judge(), "Linear_CreateIssue", scope=scope).action == "allow"
-    assert vet(Judge(), "Gmail_TrashEmail", scope=scope).check == "scope_deny"
-    assert vet(Judge(), "GoogleCalendar_CreateEvent", scope=scope).check == "tier_limit"
