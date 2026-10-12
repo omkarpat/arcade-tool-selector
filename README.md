@@ -1,6 +1,6 @@
 # arcade-tool-selector
 
-Prompt-based tool gating for [Arcade](https://arcade.dev). Instead of handing an LLM every Arcade tool and letting it choose, a selector picks the few tools relevant to the user's prompt, within a project-level scope, and only those reach the LLM.
+Prompt-based tool gating for [Arcade](https://arcade.dev). Instead of handing an LLM every Arcade tool and letting it choose, a selector picks the few tools relevant to the user's prompt, within a project-level scope, and only those reach the LLM. Every call the model then makes is vetted against project policy (risk tiers, argument rules, intent checks, human approval) before Arcade executes it.
 
 The selection paradigm is borrowed from [jev-search](https://github.com/superagents-lab/jev-search): batched yes/no gates with probabilities, thresholds, pins and fallback defaults.
 
