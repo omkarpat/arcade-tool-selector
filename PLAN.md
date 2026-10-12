@@ -170,7 +170,7 @@ The vetter runs these checks in order, cheapest first. The first decisive result
   - It catches callers that skip the library entirely.
 - **Post-hook (optional).** It redacts results per policy (e.g. strip customer PII before it reaches the model) and flags outputs that look like instructions, which is a classic injection carrier.
 
-**Audit.** Each decision is logged with:
+**Audit.** Arcade already records every executed call: status, timing, and inputs/outputs for admins, readable via `GET /v1/orgs/{org}/projects/{project}/tool_executions`. Arcade has no API for writing custom events, and gateway responses carry no execution id. So a `call` entry is only a key into Arcade's record (`user_id`, `toolkit`, `tool`, `started_at`), and `ats-audit` resolves it. Events Arcade can't see go to JSONL or, optionally, to OpenTelemetry: prompts, catalog changes, denials, and calls blocked on authorization. Each decision is logged with:
 - project, user, prompt hash, selection id
 - tool, arguments (redacted per policy)
 - the check that decided, decision, score and reason

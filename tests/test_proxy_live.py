@@ -12,7 +12,8 @@ from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from arcade_tool_selector.catalog import Catalog, CatalogStore
-from arcade_tool_selector.settings import REPO_ROOT, load_settings
+from arcade_tool_selector.executions import ExecutionKey, find_execution
+from arcade_tool_selector.settings import REPO_ROOT, load_env, load_settings
 
 pytestmark = [pytest.mark.skipif(not os.environ.get("ATS_LIVE"), reason="set ATS_LIVE=1"), pytest.mark.anyio]
 
@@ -34,7 +35,7 @@ async def list_and_call(data_dir):
         await session.initialize()
         tools = (await session.list_tools()).tools
         ready = time.monotonic() - started
-        whoami = await session.call_tool("Linear_WhoAmI", {})
+        whoami = await session.call_tool("GoogleCalendar_WhoAmI", {})
         unknown = await session.call_tool("Nope_NotATool", {})
         hook = subprocess.run(
             ["uv", "run", "--project", str(REPO_ROOT), "ats-hook", "user-prompt-submit"],
@@ -52,7 +53,7 @@ async def test_pass_through_cache_and_hook(tmp_path):
     print(f"\ncold start: {len(tools)} tools in {cold:.1f}s")
     assert len(tools) > 105, "every tools/list page is served"
     assert {"Linear_ListIssues", "Slack_InviteUsersToChannel"} <= names
-    print("Linear_WhoAmI:", whoami.content[0].text[:200])
+    assert not whoami.is_error, "GoogleCalendar is authorized for ARCADE_USER_ID"
     assert unknown.is_error
 
     assert hook.returncode == 0 and hook.stdout == "", "phase-1 hooks change nothing in Claude Code"
@@ -91,3 +92,17 @@ async def test_shared_cache_change_reaches_client(tmp_path):
             await changed.wait()
         after = {t.name for t in (await session.list_tools()).tools}
         assert after == {t.name for t in before} - {"Linear_ArchiveIssue"}
+
+
+async def test_call_resolves_to_arcade_execution(tmp_path):
+    """A `call` audit event carries the keys to find Arcade's own record of the execution."""
+    await list_and_call(tmp_path)
+    load_env()
+    call = next(e for e in map(json.loads, (tmp_path / "audit.jsonl").read_text().splitlines()) if e["event"] == "call")
+    key = ExecutionKey.model_validate(call)
+    with anyio.fail_after(60):
+        while (execution := find_execution(key)) is None:  # Arcade's log lags the call by a few seconds
+            await anyio.sleep(3)
+    print("arcade execution:", execution.id, execution.execution_status)
+    assert (execution.toolkit_name, execution.tool_name) == ("GoogleCalendar", "WhoAmI")
+    assert execution.execution_status == "completed"
