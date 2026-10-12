@@ -29,7 +29,7 @@ The proxy keeps your existing server name (e.g. `workspace-search`), so tool nam
 - Claude Code v2.1.295 or later, which hooks need for `onFailure`.
 - [`uv`](https://docs.astral.sh/uv/).
 - An Arcade account and an API key (Arcade dashboard → API keys).
-- An API key for the judge model, e.g. `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. Which one depends on `judge.chain` in your config.
+- An OpenAI API key for the judge model. The default judge is OpenAI's Decisions API.
 
 ### 1. Create a gateway for the proxy
 
@@ -51,7 +51,7 @@ Where each value comes from:
 | `ARCADE_USER_ID` | An id you choose for yourself, usually the email you sign in to Arcade with. Arcade keys tool authorizations (your Gmail, Slack, … OAuth grants) to this id. A new id means re-authorizing each toolkit once on first use. |
 | `ATS_GATEWAY_URL` | The gateway from step 1: dashboard → **MCP Gateways** → your gateway → URL (`https://api.arcade.dev/mcp/<slug>`). It must use **Arcade Headers** auth. |
 | `ATS_CONFIG` | The project config from step 3. It defaults to `ats.yaml` in the repo root. |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys, or [platform.openai.com](https://platform.openai.com/api-keys). You only need the provider named in `judge.chain`; the example config uses Anthropic. |
+| `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). The default judge is the OpenAI Decisions API (`judge.chain: [openai-decisions:gpt-6-luna]`). `ANTHROPIC_API_KEY` is only needed if you add an Anthropic judge. |
 
 ```sh
 git clone https://github.com/omkarpat/arcade-tool-selector ~/arcade-tool-selector

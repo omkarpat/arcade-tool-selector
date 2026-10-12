@@ -43,4 +43,4 @@ policy:
   on_intent_fail: approve
 
 judge:
-  chain: [anthropic:claude-haiku-5-5]
+  chain: [openai-decisions:gpt-6-luna]      # OpenAI Decisions API: native per-question probabilities

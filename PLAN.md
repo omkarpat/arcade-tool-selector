@@ -221,7 +221,7 @@ policy:
     timeout_s: 300                              # then deny
   redact_results: [ssn, card_number]
 judge:
-  chain: [openai-decisions:gpt-6-luna, anthropic:claude-haiku-5-5]
+  chain: [openai-decisions:gpt-6-luna]        # default; other adapters optional
 cards:
   overrides: cards/support-bot.yaml           # hand-tuned questions/criteria
 ```
@@ -370,13 +370,13 @@ Decided so far:
 - **The first consumer is Claude Code,** via the proxy and hooks (§4.8).
 - **The project boundary is the Arcade gateway.** The gateway's Allowed Tools list is the outer scope, and the YAML adds the project prompt, selection settings and policy.
 - **Deterministic vetting lands before the LLM selector** (phases 3 → 4).
+- **The default judge is the OpenAI Decisions API** (`gpt-6-luna`), which gives native per-question probabilities, as in jev-search. Phase 4 builds that adapter first; logprobs and Anthropic adapters stay optional.
 
 Still open:
-1. **Default judge.** Is it the OpenAI Decisions API (closest to jev-search, native probabilities) or Anthropic (stated confidence, needs calibration)?
-2. **Granularity.** Should we select individual tools, or allow selecting whole toolkits when most of a toolkit passes?
-3. **Card authoring.** Do we auto-generate cards and hand-tune only the confusable ones, or hand-write all of them for the seed toolkits?
-4. **Name.** Is `arcade-tool-selector` fine, now that the project also vets calls?
-5. **Policy authoring.** Do we use YAML with built-in rule types (planned), or an existing policy engine such as OPA/Rego or Cedar so security teams can reuse their tooling? We could start with YAML and design rules to compile to Cedar later.
-6. **Default posture.** Should an unlabelled tool default to `vet` (safer, more LLM calls) or to its auto-labelled tier?
-7. **Upstream auth.** Is an API key in a mode-600 env file, read only by the proxy, acceptable until the plugin moves it to secure storage? Or should the proxy run the gateway's OAuth flow itself, so no long-lived key sits on disk at all?
-8. **Test gateway.** Which toolkits should the test gateway carry? A mirror of `workspace-search` (Gmail, Calendar, Drive, Linear, Slack) gives a realistic catalog with read, send and destructive tools.
+1. **Granularity.** Should we select individual tools, or allow selecting whole toolkits when most of a toolkit passes?
+2. **Card authoring.** Do we auto-generate cards and hand-tune only the confusable ones, or hand-write all of them for the seed toolkits?
+3. **Name.** Is `arcade-tool-selector` fine, now that the project also vets calls?
+4. **Policy authoring.** Do we use YAML with built-in rule types (planned), or an existing policy engine such as OPA/Rego or Cedar so security teams can reuse their tooling? We could start with YAML and design rules to compile to Cedar later.
+5. **Default posture.** Should an unlabelled tool default to `vet` (safer, more LLM calls) or to its auto-labelled tier?
+6. **Upstream auth.** Is an API key in a mode-600 env file, read only by the proxy, acceptable until the plugin moves it to secure storage? Or should the proxy run the gateway's OAuth flow itself, so no long-lived key sits on disk at all?
+7. **Test gateway.** Which toolkits should the test gateway carry? A mirror of `workspace-search` (Gmail, Calendar, Drive, Linear, Slack) gives a realistic catalog with read, send and destructive tools.
