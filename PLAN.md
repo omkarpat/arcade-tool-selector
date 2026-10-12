@@ -150,7 +150,7 @@ LLM emits call ──► Vetter ──► allow ──────────�
 The vetter runs these checks in order, cheapest first. The first decisive result wins.
 
 1. **In selection.** Is the tool in this turn's selection, or pinned? If not, deny. This is what turns selection into a security boundary: a tool the user's request didn't need can't run, even if injected text asks for it.
-2. **Static policy.** Every tool has a risk tier: `read`, `write`, `send` (leaves the org: email, messages, posts) or `destructive` (delete, trash, revoke, transfer). Tiers are auto-labelled from the name and description, and the project config can override them. Project policy then maps each tier, or a specific tool, to `allow`, `vet`, `approve` or `deny`.
+2. **Static policy.** Every tool has a risk tier: `read`, `write`, `send` (leaves the org: email, messages, posts) or `destructive` (delete, trash, revoke, transfer). `read`, `write` and `destructive` come from Arcade's own behavior metadata. Arcade has no "reaches people" flag, so `send` is a short curated list (`cards.SEND_TOOLS`). `policy.tool_tiers` in the project config overrides any of them. Project policy then maps each tier, or a specific tool, to `allow`, `vet`, `approve` or `deny`.
 3. **Argument rules.** These are declarative constraints on inputs, such as:
    - recipient domains, or "only addresses already in this thread"
    - Slack channel or Linear team allowlists
@@ -264,7 +264,9 @@ Verified in phase 1 with a real `claude -p` session. Without a `claude` ancestor
 
 **Upstream auth.** The proxy authenticates to a gateway in **Arcade Headers** mode, sending `Authorization: Bearer <ARCADE_API_KEY>` plus `Arcade-User-ID`. The proxy loads the key, user id, gateway URL and judge keys itself from an env file (`.env` in the repo root, gitignored, mode 600, overridable via `ATS_ENV_FILE`). They're never passed through Claude Code's config, which would store them in plain text in `~/.claude.json`. Hooks need no secrets. The plugin's `sensitive` userConfig (secure storage) replaces the file in phase 6. Per-tool OAuth (Gmail, Slack, …) still happens through Arcade: the authorization URL comes back in the tool result and the proxy passes it through. We'll use a separate test gateway, so the existing `workspace-search` gateway is untouched until we cut over.
 
-**Catalog source.** In this mode the catalog is the gateway's own MCP `tools/list`, i.e. exactly the gateway's Allowed Tools. The gateway paginates `tools/list` (~105 tools per page), so the proxy must follow `nextCursor` until it is exhausted. Reading only the first page silently drops tools. It's enriched with `arcadepy` `tools.get` for toolkit, version and auth requirements, which feed the risk tiers and the scope report. So **the Arcade project and gateway is the project-level outer boundary**, and the YAML config only adds the project prompt, selection settings and policy.
+**Catalog source.** In this mode the catalog is the gateway's own MCP `tools/list`, i.e. exactly the gateway's Allowed Tools. The gateway paginates `tools/list` (~105 tools per page), so the proxy must follow `nextCursor` until it is exhausted. Reading only the first page silently drops tools. No extra lookups are needed. Each tool's `_meta.arcade` carries the following, which feed the cards, risk tiers and scope report:
+- operations, `read_only` / `destructive` flags and service domain
+- the OAuth provider and scopes So **the Arcade project and gateway is the project-level outer boundary**, and the YAML config only adds the project prompt, selection settings and policy.
 
 **Example config.** The `workspace-search` cut-over is in [`examples/claude-code/`](examples/claude-code/):
 - `mcp.before.json` → `mcp.json` (direct gateway → proxy)

@@ -10,6 +10,7 @@ dependencies = [
     "mcp>=2.3.0",
     "python-dotenv>=1.2.4",
     "pyyaml>=6.0.3",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.scripts]
@@ -32,6 +33,8 @@ packages = ["src/arcade_tool_selector"]
 
 [dependency-groups]
 dev = [
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
 ]

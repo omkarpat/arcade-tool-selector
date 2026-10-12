@@ -3,3 +3,4 @@ ats.yaml
 .venv/
 __pycache__/
 .pytest_cache/
+evals/catalogs/
