@@ -6,6 +6,7 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
 dependencies = [
+    "arcadepy>=1.10.0",
     "mcp>=2.3.0",
     "python-dotenv>=1.2.4",
     "pyyaml>=6.0.3",
@@ -14,6 +15,13 @@ dependencies = [
 [project.scripts]
 ats-proxy = "arcade_tool_selector.proxy.server:main"
 ats-hook = "arcade_tool_selector.claude_code.hook:main"
+ats-audit = "arcade_tool_selector.executions:main"
+
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-exporter-otlp-proto-http>=1.45.1",
+    "opentelemetry-sdk>=1.45.1",
+]
 
 [build-system]
 requires = ["hatchling"]

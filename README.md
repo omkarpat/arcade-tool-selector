@@ -120,9 +120,33 @@ Merge [`examples/claude-code/settings.json`](examples/claude-code/settings.json)
 - Send a prompt that needs a tool. In phase 1 every gateway tool is listed; from phase 4, `/mcp` shows only the selected tools.
 - From phase 3: try a call your policy marks `approve`, e.g. archiving a Linear issue. You should get a permission prompt with the vetter's reason.
 - Check the files under `~/.local/share/ats/` (override with `ATS_DATA_DIR`):
-  - `audit.jsonl` has one line per call, prompt and catalog change.
+  - `audit.jsonl` has one line per call, prompt and catalog change; see [Audit](#audit).
   - `proxy.log` is the proxy's own log.
   - `hook.log` shows whether each prompt hook reached the proxy.
+
+### Audit
+
+Arcade already records every executed tool call: status, timing, and inputs/outputs for admins. It's under the dashboard's tool executions, retained 7–90 days. The proxy doesn't duplicate that. It logs what Arcade can't see:
+
+| Event | Meaning |
+|---|---|
+| `call` | Pointer to Arcade's record: `user_id`, `toolkit`, `tool`, `started_at` |
+| `call_needs_authorization` | The user hasn't authorized the toolkit yet. The call never ran, so Arcade has no record. |
+| `call_denied` / `call_failed` | Refused by the proxy, or the gateway was unreachable |
+| `prompt_seen` | A prompt reached the proxy: session id, prompt id, length. The prompt text is not stored. |
+| `catalog_changed` | Tools added, removed or changed on the gateway |
+
+These events go to `audit.jsonl` by default. To send them to an OpenTelemetry collector instead (Datadog, Grafana, a SIEM, …):
+1. Run `uv sync --extra otel`.
+2. Set `OTEL_EXPORTER_OTLP_ENDPOINT` (plus `OTEL_EXPORTER_OTLP_HEADERS` if your collector needs auth) in `.env`.
+
+Events are emitted as OTel log records named `ats.<event>`.
+
+To see recent events, with each call resolved to its Arcade execution, set `ARCADE_ORG_ID` / `ARCADE_PROJECT_ID` in `.env` and run:
+
+```sh
+uv run ats-audit 20
+```
 
 ### Tests
 

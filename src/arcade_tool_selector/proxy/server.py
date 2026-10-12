@@ -10,6 +10,7 @@ import logging
 import random
 import time
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import anyio
 from anyio.abc import SocketStream, TaskGroup
@@ -22,6 +23,7 @@ from mcp.server.stdio import stdio_server
 from arcade_tool_selector.audit import Audit
 from arcade_tool_selector.catalog import Catalog, CatalogStore, diff
 from arcade_tool_selector.claude_code.runtime import PromptSubmitted, socket_path
+from arcade_tool_selector.executions import ExecutionKey
 from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import Settings, load_settings
 
@@ -35,7 +37,7 @@ class Proxy:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.store = CatalogStore(settings.data_dir, settings.gateway_key)
-        self.audit = Audit(settings.data_dir / "audit.jsonl")
+        self.audit = Audit(settings.data_dir / "audit.jsonl", otel=settings.otel)
         self.upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, self._on_upstream_changed)
         self.refresh_interval = settings.config.catalog.refresh_interval
         self.max_staleness = settings.config.catalog.max_staleness
@@ -59,20 +61,19 @@ class Proxy:
         if name not in self.catalog.names():
             self.audit.write("call_denied", tool=name, reason="unknown_tool")
             return _error(f"{name} is not a tool on this gateway.")
-        started = time.monotonic()
+        key = ExecutionKey.for_gateway_tool(name, self.settings.user_id, datetime.now(UTC))
         try:
             result = await self.upstream.call_tool(name, params.arguments)
         except Exception as e:
             logger.exception("call to %s failed", name)
             self.audit.write("call_failed", tool=name, error=type(e).__name__)
             return _error(f"Calling {name} through the gateway failed: {e}")
-        self.audit.write(
-            "call",
-            tool=name,
-            arg_keys=sorted(params.arguments or {}),
-            is_error=bool(result.is_error),
-            ms=round((time.monotonic() - started) * 1000),
-        )
+        if _needs_authorization(result):
+            # Never executed, so Arcade has no record of it.
+            self.audit.write("call_needs_authorization", tool=name, user_id=self.settings.user_id)
+        else:
+            # Details (status, timing, inputs/outputs) live in Arcade's execution log; this is the key to it.
+            self.audit.write("call", **key.model_dump(mode="json"), is_error=bool(result.is_error))
         return result
 
     # Catalog lifecycle
@@ -96,6 +97,7 @@ class Proxy:
             tg.start_soon(self._serve_hooks)
             yield {}
             tg.cancel_scope.cancel()
+        self.audit.close()
 
     async def refresh(self, reason: str) -> None:
         async with self._refresh_lock:
@@ -174,6 +176,16 @@ class Proxy:
                 await stream.send(json.dumps({"ok": True, "tools": len(self.catalog.tools)}).encode())
             except Exception:
                 logger.exception("bad hook message")
+
+
+def _needs_authorization(result: types.CallToolResult) -> bool:
+    """Arcade answers a call the user hasn't authorized with a JSON body carrying `authorization_url`."""
+    if not result.is_error or not result.content or result.content[0].type != "text":
+        return False
+    try:
+        return "authorization_url" in json.loads(result.content[0].text)
+    except ValueError:
+        return False
 
 
 def _error(text: str) -> types.CallToolResult:
