@@ -9,6 +9,10 @@ project_prompt: >
   and Slack. Files and updates Linear issues for my teams. Never sends anything
   outside the company without asking.
 
+catalog:
+  refresh_interval: 15m                   # poll the gateway's tools/list; 0 = startup only
+  max_staleness: 24h
+
 selection:
   k: 8
   threshold: 0.6

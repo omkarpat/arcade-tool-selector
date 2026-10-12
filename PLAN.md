@@ -115,7 +115,8 @@ The adapters share a fallback chain on 402, 429 and 5xx, plus a timeout. If ever
 
 | What | Key | Store |
 |---|---|---|
-| Catalog + tool cards | toolkit + version | local file / sqlite |
+| Catalog (gateway `tools/list`) | gateway URL hash; refreshed on startup + poll (§4.9) | JSON file in the data dir |
+| Tool cards + tiers | card hash (schema + overrides) | local file / sqlite |
 | Embeddings | card hash | same |
 | Project scope | project config hash + catalog hash | same |
 | Selections | project + normalized prompt (+ sticky set) | LRU, short TTL |
@@ -278,7 +279,7 @@ The README walks through the setup for any Claude Code instance.
 .claude-plugin/plugin.json   # userConfig: gateway_url, arcade_api_key (sensitive), arcade_user_id, project_config
 .mcp.json                    # stdio proxy: uv run --project ${CLAUDE_PLUGIN_ROOT} ats-proxy
 hooks/hooks.json             # UserPromptSubmit + PreToolUse (+ PostToolUse for audit)
-skills/                      # /ats-why (explain the last selection/decision), /ats-policy
+skills/                      # /ats-why (explain the last selection/decision), /ats-policy, /ats-refresh
 ```
 
 It's installed with `/plugin marketplace add omkarpat/arcade-tool-selector` followed by `/plugin install arcade-tool-selector`. State (cache, audit log, sockets) lives in `${CLAUDE_PLUGIN_DATA}`, which survives updates. Plugin MCP tools are named `mcp__plugin_arcade-tool-selector_<server>__<Tool>`, and the hook matcher uses that form.
@@ -287,6 +288,44 @@ It's installed with `/plugin marketplace add omkarpat/arcade-tool-selector` foll
 - Subagents get their prompt from the parent model, not through `UserPromptSubmit`. They inherit the session's current selection, and `request_more_tools` covers the gaps.
 - `claude -p` and the Agent SDK only refresh the tool list on `list_changed`; they don't re-prompt. Gating via `PreToolUse` and the proxy still holds there.
 - The hooks govern this server only. Other MCP servers and built-in tools are untouched.
+
+### 4.9 Catalog cache and refresh
+
+The catalog (all pages of the gateway's `tools/list`) is cached on disk. That makes Claude Code startup fast and keeps a gateway outage from blanking the tool list. A poll keeps the cache current.
+
+**On startup.** Claude Code spawns the proxy when the session starts.
+1. The proxy loads `<data_dir>/catalog/<gateway-hash>.json` and answers `initialize` and `tools/list` from it immediately.
+2. It then refreshes from the gateway in the background (stale-while-revalidate).
+3. If there's no cache yet (first run), it fetches synchronously before answering.
+4. If that fetch also fails, it fails closed: it advertises no gateway tools, and `request_more_tools` reports why.
+
+**Poll.** A background task in the proxy re-fetches every `catalog.refresh_interval` (default 15 min, with ±10% jitter).
+- It follows `nextCursor` to the last page.
+- It hashes the normalized schemas, so an unchanged catalog is a no-op.
+- It writes atomically (temp file + rename), so readers never see a half-written file.
+
+**Many sessions, one poll.** Every open Claude Code session runs its own proxy, but the cache file is shared per gateway, so they don't all poll.
+- A lease file (`<gateway-hash>.lock` with an expiry) elects one poller at a time.
+- The others watch the cache file's mtime and reload when it changes.
+- If the leaseholder exits, the lease expires and another proxy takes over.
+
+**On change.** The proxy diffs the old and new catalogs into added, removed and changed tools, and only those are re-processed.
+- **Added tools** get cards, tiers and embeddings generated. They start in the `vet` tier until labelled, so a tool newly added to the gateway is never silently `allow`ed. They become selectable from the next prompt.
+- **Removed tools** drop out of the current selection.
+- **Changed schemas** have their card regenerated. Hand-tuned overrides are kept, and flagged for review if a parameter that a rule names disappears.
+- If the current selection was affected, the proxy emits `notifications/tools/list_changed` to Claude Code.
+- An audit entry `catalog_changed` records the diff.
+
+**Other refresh triggers:**
+- **Upstream push:** if the gateway sends `notifications/tools/list_changed` itself, the proxy refreshes immediately and the poll is just a fallback. Whether Arcade's gateway emits this is unverified; we'll check in phase 1.
+- **Unknown tool:** a call for a tool the cache doesn't know triggers a forced refresh before the call is denied.
+- **Manual:** `/ats-refresh` (skill) forces a refresh and prints the diff.
+
+```yaml
+catalog:
+  refresh_interval: 15m      # 0 disables polling (startup refresh only)
+  max_staleness: 24h         # older cache + unreachable gateway → warn in additionalContext
+```
 
 ## 5. Evaluation (built in phase 1, not bolted on)
 
@@ -349,7 +388,7 @@ The stack is Python 3.11+ and `arcadepy`, with `uv` for packaging and an MIT lic
 |---|---|---|
 | 0 | This plan, README, license | Plan reviewed |
 | **Claude Code** | | |
-| 1 | Pass-through proxy: stdio MCP → test Arcade gateway (Arcade Headers auth), forwards `tools/list`/`tools/call`, audit log; socket-correlation spike with a no-op `UserPromptSubmit` hook | Swapped in for a gateway entry, Claude Code behaves exactly as with the direct connection; hook reaches the right proxy |
+| 1 | Pass-through proxy: stdio MCP → test Arcade gateway (Arcade Headers auth), forwards `tools/list`/`tools/call`, audit log; catalog cache with startup load, background poll, shared lease and diff (§4.9); socket-correlation spike with a no-op `UserPromptSubmit` hook | Swapped in for a gateway entry, Claude Code behaves exactly as with the direct connection; warm start serves all 166 tools from cache; a tool added on the gateway appears within one poll; hook reaches the right proxy |
 | 2 | Catalog + `ToolCard` + risk tiers (auto-label + overrides) + eval dataset v0 + harness with "all tools" and BM25-only baselines | `evals/run.py` reports recall/precision/size on the test gateway's catalog |
 | 3 | Deterministic vetter in `PreToolUse` + proxy re-check: tiers, argument rules, `ask` via Claude Code's prompt | Security slice: 100% of tier/argument violations blocked; false-block rate reported |
 | 4 | Selector v1: judge interface + one adapter + batched gate + select rules; `UserPromptSubmit` → proxy `list_changed`; `additionalContext`; in-selection check | Model only sees selected tools; gate beats BM25 on recall at equal set size; p95 < 3s |
