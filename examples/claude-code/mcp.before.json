@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "workspace-search": {
+      "type": "http",
+      "url": "https://api.arcade.dev/mcp/<your-gateway-slug>"
+    }
+  }
+}

@@ -265,6 +265,13 @@ This is a spike in phase 1. The fallback is to key by `cwd` and use the most rec
 
 **Catalog source.** In this mode the catalog is the gateway's own MCP `tools/list`, i.e. exactly the gateway's Allowed Tools. It's enriched with `arcadepy` `tools.get` for toolkit, version and auth requirements, which feed the risk tiers and the scope report. So **the Arcade project and gateway is the project-level outer boundary**, and the YAML config only adds the project prompt, selection settings and policy.
 
+**Example config.** The `workspace-search` cut-over is in [`examples/claude-code/`](examples/claude-code/):
+- `mcp.before.json` → `mcp.json` (direct gateway → proxy)
+- `settings.json` (hooks)
+- `ats.yaml` (project config with policy, using real `workspace-search` tool and parameter names)
+
+The README walks through the setup for any Claude Code instance.
+
 **Packaging.** One Claude Code plugin in this repo, which also serves as a marketplace:
 
 ```
