@@ -60,6 +60,7 @@ class Settings(BaseModel):
     user_id: str
     config: ProjectConfig
     data_dir: Path
+    otel: bool
 
     @property
     def gateway_key(self) -> str:
@@ -77,4 +78,5 @@ def load_settings() -> Settings:
         user_id=os.environ["ARCADE_USER_ID"],
         config=ProjectConfig.model_validate(yaml.safe_load(config_path.read_text())),
         data_dir=data_dir(),
+        otel=bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")),
     )
