@@ -41,8 +41,8 @@ class CatalogDiff(BaseModel):
         return not (self.added or self.removed or self.changed)
 
 
-def diff(old: Catalog | None, new: Catalog) -> CatalogDiff:
-    before = {t.name: tool_json(t) for t in old.tools} if old else {}
+def diff(old: Catalog, new: Catalog) -> CatalogDiff:
+    before = {t.name: tool_json(t) for t in old.tools}
     after = {t.name: tool_json(t) for t in new.tools}
     return CatalogDiff(
         added=sorted(after.keys() - before.keys()),

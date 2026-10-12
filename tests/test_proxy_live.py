@@ -7,10 +7,12 @@ import time
 
 import anyio
 import pytest
+from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from arcade_tool_selector.settings import REPO_ROOT
+from arcade_tool_selector.catalog import Catalog, CatalogStore
+from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
 pytestmark = [pytest.mark.skipif(not os.environ.get("ATS_LIVE"), reason="set ATS_LIVE=1"), pytest.mark.anyio]
 
@@ -22,7 +24,7 @@ def anyio_backend():
 
 def proxy_params(data_dir) -> StdioServerParameters:
     return StdioServerParameters(
-        command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env={"ATS_DATA_DIR": str(data_dir)}
+        command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env={**os.environ, "ATS_DATA_DIR": str(data_dir)}
     )
 
 
@@ -69,11 +71,6 @@ async def test_pass_through_cache_and_hook(tmp_path):
 
 async def test_shared_cache_change_reaches_client(tmp_path):
     """A catalog written by the lease holder is picked up and announced via list_changed."""
-    from mcp import types
-
-    from arcade_tool_selector.catalog import Catalog, CatalogStore
-    from arcade_tool_selector.settings import load_settings
-
     changed = anyio.Event()
 
     async def on_message(message):

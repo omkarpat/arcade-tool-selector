@@ -5,7 +5,7 @@ from typing import Any
 
 
 class Audit:
-    """Append-only JSONL log of proxy decisions and catalog changes."""
+    """Append-only JSONL event log."""
 
     def __init__(self, path: Path):
         self.path = path

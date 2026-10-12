@@ -3,10 +3,20 @@ import os
 import subprocess
 from pathlib import Path
 
+from pydantic import BaseModel
 
-def claude_pid(start: int | None = None) -> int | None:
+
+class PromptSubmitted(BaseModel):
+    """What the UserPromptSubmit hook sends the proxy over the socket."""
+
+    session_id: str | None
+    prompt_id: str | None
+    chars: int
+
+
+def claude_pid() -> int | None:
     """Pid of the nearest ancestor process named `claude`."""
-    pid = start or os.getpid()
+    pid = os.getpid()
     while pid > 1:
         out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)], capture_output=True, text=True).stdout.split(None, 1)
         if len(out) < 2:

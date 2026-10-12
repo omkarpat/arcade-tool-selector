@@ -2,10 +2,11 @@ import hashlib
 import os
 import re
 from pathlib import Path
+from typing import Annotated
 
 import yaml
 from dotenv import dotenv_values
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -35,9 +36,13 @@ def data_dir() -> Path:
     return path
 
 
+# Seconds; config writes 30s, 15m, 24h or a bare number.
+Duration = Annotated[float, BeforeValidator(parse_duration)]
+
+
 class CatalogConfig(BaseModel):
-    refresh_interval: str = "15m"
-    max_staleness: str = "24h"
+    refresh_interval: Duration = 15 * 60
+    max_staleness: Duration = 24 * 3600
 
 
 class ProjectConfig(BaseModel):

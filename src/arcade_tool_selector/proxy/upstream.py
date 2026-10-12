@@ -26,8 +26,8 @@ class Upstream:
         }
         self.on_tools_changed = on_tools_changed
         self._session: ClientSession | None = None
-        self._ready = anyio.Event()
-        self._broken = anyio.Event()
+        self._connected = anyio.Event()
+        self._dropped = anyio.Event()
 
     async def run(self) -> None:
         backoff = 1.0
@@ -41,14 +41,13 @@ class Upstream:
                     await session.initialize()
                     logger.info("connected to gateway")
                     backoff = 1.0
-                    self._broken = anyio.Event()
+                    self._dropped = anyio.Event()
                     self._session = session
-                    self._ready.set()
-                    await self._broken.wait()
+                    self._connected.set()
+                    await self._dropped.wait()
             except Exception:
                 logger.exception("gateway connection failed; retrying in %.0fs", backoff)
-            self._ready = anyio.Event()
-            self._session = None
+            self._drop()
             await anyio.sleep(backoff)
             backoff = min(backoff * 2, 60)
 
@@ -57,28 +56,30 @@ class Upstream:
         try:
             return await self._list_all(await self._get_session())
         except Exception:
-            self._mark_broken()
+            self._drop()
             return await self._list_all(await self._get_session())
 
     async def call_tool(self, name: str, arguments: dict | None) -> types.CallToolResult:
         """Never retried: a tool call may not be idempotent."""
         session = await self._get_session()
         try:
-            result = await session.call_tool(name, arguments)
+            return await session.call_tool(name, arguments)
         except Exception:
-            self._mark_broken()
+            self._drop()
             raise
-        return result
 
-    def _mark_broken(self) -> None:
-        self._ready = anyio.Event()
+    def _drop(self) -> None:
+        """Tear down the session; callers wait for run() to reconnect."""
+        # Replace only a set event: waiters on an unset one must see the next connect.
+        if self._connected.is_set():
+            self._connected = anyio.Event()
         self._session = None
-        self._broken.set()
+        self._dropped.set()
 
     async def _get_session(self) -> ClientSession:
         with anyio.fail_after(CONNECT_TIMEOUT):
             while self._session is None:
-                await self._ready.wait()
+                await self._connected.wait()
         return self._session
 
     @staticmethod
@@ -86,7 +87,7 @@ class Upstream:
         tools: list[types.Tool] = []
         cursor = None
         while True:
-            page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor) if cursor else None)
+            page = await session.list_tools(params=types.PaginatedRequestParams(cursor=cursor))
             tools += page.tools
             cursor = page.next_cursor
             if not cursor:
