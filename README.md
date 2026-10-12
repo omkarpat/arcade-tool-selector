@@ -4,9 +4,10 @@ Prompt-based tool gating for [Arcade](https://arcade.dev). Normally an LLM gets 
 
 The selection paradigm is borrowed from [jev-search](https://github.com/superagents-lab/jev-search): batched yes/no gates with probabilities, plus thresholds, pins and fallback defaults.
 
-> **Status: planning.** See [PLAN.md](PLAN.md). The setup below describes the target Claude Code setup. Components land phase by phase:
-> - The manual setup starts working with phase 1, the pass-through proxy.
-> - The plugin install arrives in phase 6.
+> **Status: phase 1 (pass-through proxy).** See [PLAN.md](PLAN.md).
+> - The proxy works today: it serves every gateway tool from a cached, polled catalog, forwards calls, and writes an audit log.
+> - The hooks reach the proxy but don't change anything in Claude Code yet.
+> - Selection (only relevant tools listed) and vetting (allow / deny / ask) land in phases 3–5. The setup below won't change when they do.
 
 ## How it works with Claude Code
 
@@ -116,9 +117,19 @@ Merge [`examples/claude-code/settings.json`](examples/claude-code/settings.json)
 ### 6. Check it
 
 - Restart Claude Code, then run `/mcp`. The server should be connected through `uv`.
-- Send a prompt that needs a tool. `/mcp` → the server shows only the selected tools.
-- Try a call your policy marks `approve`, e.g. archiving a Linear issue. You should get a permission prompt with the vetter's reason.
-- The audit log is at `~/.local/share/ats/audit.jsonl`.
+- Send a prompt that needs a tool. In phase 1 every gateway tool is listed; from phase 4, `/mcp` shows only the selected tools.
+- From phase 3: try a call your policy marks `approve`, e.g. archiving a Linear issue. You should get a permission prompt with the vetter's reason.
+- Check the files under `~/.local/share/ats/` (override with `ATS_DATA_DIR`):
+  - `audit.jsonl` has one line per call, prompt and catalog change.
+  - `proxy.log` is the proxy's own log.
+  - `hook.log` shows whether each prompt hook reached the proxy.
+
+### Tests
+
+```sh
+uv run pytest                                  # offline
+ATS_LIVE=1 uv run pytest -s                    # end-to-end against the gateway in .env
+```
 
 ### Plugin install (phase 6)
 
