@@ -257,10 +257,10 @@ cards:
 5. **`request_more_tools(need)`** is a proxy-native tool that is always listed. The model calls it when the current set falls short. It re-runs selection with `need` added to the request, and the proxy emits `list_changed` again. Calls to it are logged, and the vetter still applies to whatever gets added.
 
 **Session correlation.** The hook knows Claude Code's `session_id`, but the proxy doesn't: MCP `initialize` doesn't carry it. Both are child processes of the same `claude` process, so:
-- the proxy listens on `${CLAUDE_PLUGIN_DATA}/run/<claude-pid>.sock`;
+- the proxy listens on `/tmp/ats-<uid>/<claude-pid>-<data-dir-hash>.sock`, a short private dir, because AF_UNIX paths are capped at ~104 bytes and plugin data dirs are long;
 - the hook walks up its own process tree to find the `claude` pid and connects to that socket.
 
-This is a spike in phase 1. The fallback is to key by `cwd` and use the most recently initialized proxy.
+Verified in phase 1 with a real `claude -p` session. Without a `claude` ancestor, both sides key by `cwd`.
 
 **Upstream auth.** The proxy authenticates to a gateway in **Arcade Headers** mode, sending `Authorization: Bearer <ARCADE_API_KEY>` plus `Arcade-User-ID`. The proxy loads the key, user id, gateway URL and judge keys itself from an env file (`.env` in the repo root, gitignored, mode 600, overridable via `ATS_ENV_FILE`). They're never passed through Claude Code's config, which would store them in plain text in `~/.claude.json`. Hooks need no secrets. The plugin's `sensitive` userConfig (secure storage) replaces the file in phase 6. Per-tool OAuth (Gmail, Slack, …) still happens through Arcade: the authorization URL comes back in the tool result and the proxy passes it through. We'll use a separate test gateway, so the existing `workspace-search` gateway is untouched until we cut over.
 
