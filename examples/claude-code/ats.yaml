@@ -1,0 +1,50 @@
+# Project config for a workspace-search gateway (Gmail, Calendar, Drive, Linear, Slack).
+# The gateway's Allowed Tools list is the outer scope; this file adds the
+# project prompt, selection settings and call policy.
+project: workspace-search
+server_name: workspace-search            # must match the MCP server name in Claude Code
+
+project_prompt: >
+  Personal work assistant. Reads email, calendar, Drive files, Linear issues
+  and Slack. Files and updates Linear issues for my teams. Never sends anything
+  outside the company without asking.
+
+catalog:
+  refresh_interval: 15m                   # poll the gateway's tools/list; 0 = startup only
+  max_staleness: 24h
+
+selection:
+  k: 8
+  threshold: 0.6
+  shortlist: 40
+  pins: []
+  defaults: [Linear_ListIssues, Gmail_SearchThreads]
+  sticky_turns: 2
+  request_more_tools: true
+
+policy:
+  tiers:                                  # default action per risk tier
+    read: allow
+    write: vet
+    send: vet
+    destructive: approve                  # Claude Code permission prompt
+  tools:                                  # per-tool overrides
+    Linear_ArchiveIssue: approve
+    Arcade_Registry_Create_Suggestion: approve
+    GoogleCalendar_UpdateEvent: vet
+  args:
+    Linear_CreateIssue:
+      team: { allow: [TEAM1, TEAM2] }     # your Linear team keys
+    GoogleCalendar_UpdateEvent:
+      attendee_emails_to_add: { domains: [example.com] }
+      send_notifications_to_attendees: { allow: [nobody, all] }   # never externalOnly
+    Slack_InviteUsersToChannel:
+      channel_name: { allow: ["#eng", "#support"] }
+      emails: { domains: [example.com] }
+    Gmail_TriageEmails:
+      email_ids: { max_items: 20 }
+  intent_threshold: 0.7
+  on_intent_fail: approve
+
+judge:
+  chain: [openai-decisions:gpt-6-luna]      # OpenAI Decisions API: native per-question probabilities

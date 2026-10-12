@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$ATS_HOME\" ats-hook user-prompt-submit",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__workspace-search__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$ATS_HOME\" ats-hook pre-tool-use",
+            "timeout": 30,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "mcp__workspace-search__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run --project \"$ATS_HOME\" ats-hook post-tool-use",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

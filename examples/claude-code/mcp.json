@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "workspace-search": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--project", "${ATS_HOME}", "ats-proxy"]
+    }
+  }
+}
