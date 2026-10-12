@@ -1,50 +1,26 @@
 # Project config for a workspace-search gateway (Gmail, Calendar, Drive, Linear, Slack).
-# The gateway's Allowed Tools list is the outer scope; this file adds the
-# project prompt, selection settings and call policy.
+# The gateway decides which tools exist; project_prompt is the policy every call is judged against.
 project: workspace-search
 server_name: workspace-search            # must match the MCP server name in Claude Code
 
 project_prompt: >
-  Personal work assistant. Reads email, calendar, Drive files, Linear issues
-  and Slack. Files and updates Linear issues for my teams. Never sends anything
-  outside the company without asking.
+  Personal work assistant. Reads email, calendar, Drive files, Linear issues and Slack. Files and updates
+  Linear issues for my teams. Never deletes or archives anything, and never sends anything outside the
+  company.
 
 catalog:
   refresh_interval: 15m                   # poll the gateway's tools/list; 0 = startup only
   max_staleness: 24h
 
-selection:
-  k: 8
-  threshold: 0.6
-  shortlist: 40
-  pins: []
-  defaults: [Linear_ListIssues, Gmail_SearchThreads]
-  sticky_turns: 2
-  request_more_tools: true
-
 scope:                                    # judged per call against project_prompt (PLAN §4.10)
   threshold: 0.85                         # both scope answers (purpose, requested) must reach this
-  deny: [Gmail_TrashEmail]                # hard limit: never, whatever the context
+  org_domains: [example.com]              # who counts as inside the organization
+  protect_internal: false                 # true: calls that reach people must not reveal internal details
 
 policy:
-  tool_tiers:                             # tier overrides; defaults come from Arcade's metadata
-    Linear_ArchiveIssue: destructive      # reversible in Linear, but treat as destructive here
   approve: [destructive]                  # in-scope calls in these tiers still ask (Claude Code's prompt)
-  on_low_scope:                           # what an out-of-scope judgment does, by tier
+  on_low_scope:                           # what an out-of-scope judgment does, by the call's tier
     read: ask
     write: ask
-    send: deny
+    send: deny                            # writes the judge says reach people (email, chat, invites, shares)
     destructive: deny
-  args:                                   # hard limits on arguments (deny on violation)
-    Linear_CreateIssue:
-      team: { allow: [TEAM1, TEAM2] }     # your Linear team keys
-    GoogleCalendar_CreateEvent:
-      attendee_emails: { domains: [example.com] }
-    GoogleCalendar_UpdateEvent:
-      attendee_emails_to_add: { domains: [example.com] }
-      send_notifications_to_attendees: { allow: [nobody, all] }   # never externalOnly
-    Slack_InviteUsersToChannel:
-      channel_name: { allow: ["#eng", "#support"] }
-      emails: { domains: [example.com] }
-    Gmail_TriageEmails:
-      email_ids: { max_items: 20 }

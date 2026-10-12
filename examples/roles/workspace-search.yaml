@@ -1,10 +1,17 @@
-# Role: read-only search across the workspace. Arcade project "Workspace Search".
-# Its gateway keeps every tool; this role allows read calls only (deterministic hard limit).
+# Role: workspace search that can also write Linear issues. Arcade project "Workspace Search".
+# Its gateway keeps every tool. The description below is the policy: the scope judge reads it on every call.
+# Archive and delete calls are judged outside the purpose and denied (destructive); any other write outside
+# the purpose is denied too (on_low_scope.write). No tool lists to maintain.
 project: workspace-search
 server_name: workspace-search
 project_prompt: >
   Personal work search assistant. Searches and reads email, calendar, Drive, Docs, Sheets, Slides, Linear and
-  Slack to answer the user's questions. It never creates, changes or deletes anything.
+  Slack to answer the user's questions. It can create and update Linear issues and comment on them. It never
+  deletes or archives anything, and doesn't create or change anything outside Linear issues.
 
-scope:
-  allow_tiers: [read]
+policy:
+  on_low_scope:                           # outside the purpose: deny writes too (default asks)
+    read: ask
+    write: deny
+    send: deny
+    destructive: deny

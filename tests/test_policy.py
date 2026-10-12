@@ -6,24 +6,18 @@ from mcp import types
 
 from arcade_tool_selector.cards import build_cards
 from arcade_tool_selector.catalog import Catalog
-from arcade_tool_selector.policy import ArgRule, Evidence, PolicyConfig, ScopeConfig, Vetter
+from arcade_tool_selector.policy import Evidence, PolicyConfig, ScopeConfig, Vetter
 
 
-def tool(name: str, read_only: bool = False, destructive: bool = False, params: tuple[str, ...] = ()) -> types.Tool:
+def tool(name: str, read_only: bool = False, destructive: bool = False) -> types.Tool:
     behavior = {"operations": [], "read_only": read_only, "destructive": destructive}
-    return types.Tool(
-        name=name,
-        description="d",
-        input_schema={"type": "object", "properties": {p: {"type": "string"} for p in params}},
-        _meta={"arcade": {"metadata": {"behavior": behavior}}},
-    )
+    return types.Tool(name=name, description="d", input_schema={"type": "object"}, _meta={"arcade": {"metadata": {"behavior": behavior}}})
 
 
 CATALOG = Catalog.from_tools(
     [
         tool("GoogleCalendar_ListEvents", read_only=True),
-        tool("GoogleCalendar_CreateEvent", params=("attendee_emails",)),  # send tier
-        tool("Linear_CreateIssue", params=("team",)),
+        tool("GoogleCalendar_CreateEvent"),
         tool("Gmail_TrashEmail", destructive=True),
     ]
 )
@@ -31,84 +25,67 @@ EVIDENCE = Evidence(project_prompt="Meeting scheduler.", user_messages=["Set up 
 
 
 class Judge:
-    def __init__(self, purpose: float = 1.0, requested: float = 1.0, discloses: float = 0.0, fail: bool = False):
-        self.answers = {"within_purpose": purpose, "requested": requested, "discloses_internal": discloses}
+    def __init__(self, purpose=1.0, requested=1.0, reaches=0.0, discloses=0.0, fail=False):
+        self.answers = {"within_purpose": purpose, "requested": requested, "reaches_people": reaches, "discloses_internal": discloses}
         self.fail = fail
-        self.asked: list[str] = []
-
-    @property
-    def calls(self) -> int:
-        return len(self.asked)
+        self.asked: list[list[str]] = []
 
     async def predicates(self, input, questions):
-        self.asked.append(",".join(questions))
+        self.asked.append(list(questions))
         if self.fail:
             raise TimeoutError
         return {name: self.answers[name] for name in questions}
 
 
-def vet(judge, tool_name, arguments=None, scope=None, **policy):
-    vetter = Vetter(scope or ScopeConfig(deny=policy.pop("deny", [])), PolicyConfig(**policy), build_cards(CATALOG), judge)
-    return anyio.run(vetter.vet, tool_name, arguments or {}, EVIDENCE)
+def vet(judge, tool_name, scope=None):
+    return anyio.run(Vetter(scope or ScopeConfig(), PolicyConfig(), build_cards(CATALOG), judge).vet, tool_name, {}, EVIDENCE)
 
 
-def test_hard_limits_deny_without_asking_the_judge():
+def test_unknown_tool_denied_without_asking_the_judge():
     judge = Judge()
-    assert vet(judge, "Gmail_TrashEmail", deny=["Gmail_TrashEmail"]).check == "scope_deny"
-    rules = {"GoogleCalendar_CreateEvent": {"attendee_emails": ArgRule(domains=["acme.com"])}}
-    assert vet(judge, "GoogleCalendar_CreateEvent", {"attendee_emails": ["pat@gmail.com"]}, args=rules).check == "arg_rule"
-    assert vet(judge, "Linear_CreateIssue", {"team": "ENG"}, args={"Linear_CreateIssue": {"team": ArgRule(allow=["SUP"])}}).action == "deny"
     assert vet(judge, "Nope_Tool").check == "unknown_tool"
-    assert judge.calls == 0
+    assert judge.asked == []
+
+
+def test_only_writes_are_asked_whether_they_reach_people():
+    judge = Judge()
+    vet(judge, "GoogleCalendar_ListEvents")
+    vet(judge, "Gmail_TrashEmail")
+    vet(judge, "GoogleCalendar_CreateEvent")
+    assert ["reaches_people" in asked for asked in judge.asked] == [False, False, True]
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "action"),
-    [("GoogleCalendar_ListEvents", "ask"), ("Linear_CreateIssue", "ask"), ("GoogleCalendar_CreateEvent", "deny"), ("Gmail_TrashEmail", "deny")],
+    ("tool_name", "reaches", "tier", "action"),
+    [
+        ("GoogleCalendar_ListEvents", 0.0, "read", "ask"),
+        ("GoogleCalendar_CreateEvent", 0.1, "write", "ask"),
+        ("GoogleCalendar_CreateEvent", 0.9, "send", "deny"),  # a write that reaches people carries send stakes
+        ("Gmail_TrashEmail", 0.0, "destructive", "deny"),
+    ],
 )
-def test_outside_purpose_follows_tier(tool_name, action):
-    decision = vet(Judge(purpose=0.1, requested=0.99), tool_name)
-    assert (decision.action, decision.check) == (action, "scope")
+def test_outside_purpose_follows_the_calls_tier(tool_name, reaches, tier, action):
+    decision = vet(Judge(purpose=0.1, reaches=reaches), tool_name)
+    assert (decision.tier, decision.action, decision.check) == (tier, action, "scope")
 
 
 def test_unclear_request_asks_whatever_the_tier():
-    decision = vet(Judge(purpose=0.95, requested=0.3), "GoogleCalendar_CreateEvent")
+    decision = vet(Judge(purpose=0.95, requested=0.3, reaches=0.9), "GoogleCalendar_CreateEvent")
     assert (decision.action, decision.check) == ("ask", "scope")
 
 
 def test_in_scope_allows_except_tiers_needing_approval():
-    assert vet(Judge(), "GoogleCalendar_CreateEvent").action == "allow"
+    assert vet(Judge(reaches=0.9), "GoogleCalendar_CreateEvent").action == "allow"
     assert vet(Judge(), "Gmail_TrashEmail").action == "ask"
 
 
-def test_judge_down_fails_closed_except_read():
-    assert vet(Judge(fail=True), "Linear_CreateIssue").action == "deny"
-    assert vet(Judge(fail=True), "GoogleCalendar_ListEvents").action == "ask"
-
-
-def test_config_problems_surface_rules_that_never_fire():
-    vetter = Vetter(
-        ScopeConfig(deny=["Gmail_Typo"]),
-        PolicyConfig(args={"Linear_CreateIssue": {"teem": ArgRule(allow=["SUP"])}}),
-        build_cards(CATALOG),
-        Judge(),
-    )
-    assert vetter.config_problems() == ["scope.deny names unknown tool Gmail_Typo", "policy.args.Linear_CreateIssue names unknown parameter teem"]
-
-
-def test_read_only_role_denies_writes_without_asking_the_judge():
-    judge = Judge()
-    read_only = ScopeConfig(allow_tiers=["read"])
-    assert vet(judge, "Linear_CreateIssue", scope=read_only).check == "tier_limit"
-    assert vet(judge, "Gmail_TrashEmail", scope=read_only).check == "tier_limit"
-    assert judge.calls == 0
-    assert vet(judge, "GoogleCalendar_ListEvents", scope=read_only).action == "allow"
-
-
-def test_disclosure_checked_only_on_sends_of_protected_projects():
+def test_disclosure_denies_only_calls_that_reach_people_in_protected_projects():
     protected = ScopeConfig(org_domains=["acme.com"], protect_internal=True)
-    leaky = Judge(discloses=0.9)
-    assert vet(leaky, "GoogleCalendar_CreateEvent", scope=protected).check == "disclosure"  # send tier
-    assert vet(leaky, "Linear_CreateIssue", scope=protected).action == "allow"  # write: not asked
-    assert vet(leaky, "GoogleCalendar_CreateEvent").action == "allow"  # project not protected
-    assert [q for q in leaky.asked if "discloses_internal" in q] == ["within_purpose,requested,discloses_internal"]
+    assert vet(Judge(reaches=0.9, discloses=0.9), "GoogleCalendar_CreateEvent", protected).check == "disclosure"
+    assert vet(Judge(reaches=0.1, discloses=0.9), "GoogleCalendar_CreateEvent", protected).action == "allow"
+    assert vet(Judge(reaches=0.9, discloses=0.9), "GoogleCalendar_CreateEvent").action == "allow"  # not protected
+
+
+def test_judge_down_fails_closed_except_read():
+    assert vet(Judge(fail=True), "GoogleCalendar_CreateEvent").action == "deny"
+    assert vet(Judge(fail=True), "GoogleCalendar_ListEvents").action == "ask"

@@ -4,13 +4,8 @@ project: meeting-scheduler
 server_name: workspace-search
 project_prompt: >
   Meeting scheduler. Reads the user's calendar, finds free time, and creates, moves or cancels events
-  for the user and their team ({domain}). Reads email only to find scheduling requests. It does not send
-  email, share files, or use any other app.
+  for the user and their team ({domain}), and only invites people at {domain}. Reads email only to find
+  scheduling requests. It does not send email, share files, or use any other app.
 
 scope:
-  deny: [Gmail_TrashEmail]
-
-policy:
-  args:
-    GoogleCalendar_CreateEvent:
-      attendee_emails: { domains: ["{domain}"] }
+  org_domains: ["{domain}"]

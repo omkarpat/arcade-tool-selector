@@ -12,23 +12,8 @@ from pydantic import BaseModel
 
 from arcade_tool_selector.catalog import Catalog
 
+# read / write / destructive come from Arcade's metadata; "send" is judged per call (policy.py).
 Tier = Literal["read", "write", "send", "destructive"]
-
-# Arcade flags read-only and destructive tools but has no "reaches people" flag:
-# these create/update tools email, message, invite or share outside the user.
-SEND_TOOLS = {
-    "Gmail.SendEmail",
-    "Gmail.SendDraftEmail",
-    "Gmail.ReplyToEmail",
-    "Gmail.ForwardEmail",
-    "Slack.SendMessage",
-    "GoogleCalendar.CreateEvent",
-    "GoogleCalendar.UpdateEvent",
-    "GoogleCalendar.RespondToEvent",
-    "GoogleDrive.ShareFile",
-    "GoogleDrive.SetGeneralAccess",
-    "Arcade.Registry_Create_Suggestion",
-}
 
 
 class Param(BaseModel):
@@ -60,7 +45,7 @@ def split_words(text: str) -> str:
     return re.sub(r"(?<=[a-z0-9])(?=[A-Z])|[._]", " ", text)
 
 
-def card_for(tool: types.Tool, tier_overrides: dict[str, Tier]) -> ToolCard:
+def card_for(tool: types.Tool) -> ToolCard:
     arcade = (tool.meta or {}).get("arcade", {})
     behavior = arcade.get("metadata", {}).get("behavior")
     auth = arcade.get("requirements", {}).get("authorization") or {}
@@ -79,13 +64,11 @@ def card_for(tool: types.Tool, tier_overrides: dict[str, Tier]) -> ToolCard:
         domains=arcade.get("metadata", {}).get("classification", {}).get("service_domains", []),
         auth_provider=auth.get("provider_id"),
         scopes=(auth.get("oauth2") or {}).get("scopes", []),
-        tier=tier_overrides.get(tool.name) or _tier(qualified, behavior),
+        tier=_tier(behavior),
     )
 
 
-def _tier(qualified_name: str, behavior: dict | None) -> Tier | None:
-    if qualified_name in SEND_TOOLS:
-        return "send"
+def _tier(behavior: dict | None) -> Tier | None:
     if behavior is None:
         return None
     if behavior["destructive"]:
@@ -93,5 +76,5 @@ def _tier(qualified_name: str, behavior: dict | None) -> Tier | None:
     return "read" if behavior["read_only"] else "write"
 
 
-def build_cards(catalog: Catalog, tier_overrides: dict[str, Tier] | None = None) -> list[ToolCard]:
-    return [card_for(tool, tier_overrides or {}) for tool in catalog.tools]
+def build_cards(catalog: Catalog) -> list[ToolCard]:
+    return [card_for(tool) for tool in catalog.tools]

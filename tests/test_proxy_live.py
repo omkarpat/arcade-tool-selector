@@ -38,8 +38,16 @@ def hook(name: str, data_dir, event: dict) -> subprocess.CompletedProcess:
     )
 
 
+CALENDAR_PROJECT = (
+    "project: calendar-assistant\nserver_name: workspace-search\nproject_prompt: >\n"
+    "  Calendar assistant. Reads the user's calendar and their Google account details to answer questions.\n"
+)
+
+
 async def list_and_call(data_dir):
-    async with stdio_client(proxy_params(data_dir)) as (read, write), ClientSession(read, write) as session:
+    config = data_dir / "ats.yaml"
+    config.write_text(CALENDAR_PROJECT)
+    async with stdio_client(proxy_params(data_dir, config)) as (read, write), ClientSession(read, write) as session:
         started = time.monotonic()
         await session.initialize()
         tools = (await session.list_tools()).tools

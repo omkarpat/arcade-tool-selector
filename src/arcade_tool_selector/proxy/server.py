@@ -95,10 +95,7 @@ class Proxy:
 
     def _vetter(self) -> Vetter:
         config = self.settings.config
-        vetter = Vetter(config.scope, config.policy, build_cards(self.catalog, config.policy.tool_tiers), self.judge)
-        for problem in vetter.config_problems():
-            logger.warning("policy config: %s", problem)
-        return vetter
+        return Vetter(config.scope, config.policy, build_cards(self.catalog), self.judge)
 
     def _evidence(self, session_id: str | None) -> Evidence:
         return Evidence(project_prompt=self.settings.config.project_prompt, user_messages=self.prompts.get(session_id, []))
