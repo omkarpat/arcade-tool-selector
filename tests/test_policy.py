@@ -31,20 +31,24 @@ EVIDENCE = Evidence(project_prompt="Meeting scheduler.", user_messages=["Set up 
 
 
 class Judge:
-    def __init__(self, purpose: float = 1.0, requested: float = 1.0, fail: bool = False):
-        self.answers = {"within_purpose": purpose, "requested": requested}
+    def __init__(self, purpose: float = 1.0, requested: float = 1.0, discloses: float = 0.0, fail: bool = False):
+        self.answers = {"within_purpose": purpose, "requested": requested, "discloses_internal": discloses}
         self.fail = fail
-        self.calls = 0
+        self.asked: list[str] = []
+
+    @property
+    def calls(self) -> int:
+        return len(self.asked)
 
     async def predicates(self, input, questions):
-        self.calls += 1
+        self.asked.append(",".join(questions))
         if self.fail:
             raise TimeoutError
-        return self.answers
+        return {name: self.answers[name] for name in questions}
 
 
-def vet(judge, tool_name, arguments=None, **policy):
-    vetter = Vetter(ScopeConfig(deny=policy.pop("deny", [])), PolicyConfig(**policy), build_cards(CATALOG), judge)
+def vet(judge, tool_name, arguments=None, scope=None, **policy):
+    vetter = Vetter(scope or ScopeConfig(deny=policy.pop("deny", [])), PolicyConfig(**policy), build_cards(CATALOG), judge)
     return anyio.run(vetter.vet, tool_name, arguments or {}, EVIDENCE)
 
 
@@ -90,3 +94,21 @@ def test_config_problems_surface_rules_that_never_fire():
         Judge(),
     )
     assert vetter.config_problems() == ["scope.deny names unknown tool Gmail_Typo", "policy.args.Linear_CreateIssue names unknown parameter teem"]
+
+
+def test_read_only_role_denies_writes_without_asking_the_judge():
+    judge = Judge()
+    read_only = ScopeConfig(allow_tiers=["read"])
+    assert vet(judge, "Linear_CreateIssue", scope=read_only).check == "tier_limit"
+    assert vet(judge, "Gmail_TrashEmail", scope=read_only).check == "tier_limit"
+    assert judge.calls == 0
+    assert vet(judge, "GoogleCalendar_ListEvents", scope=read_only).action == "allow"
+
+
+def test_disclosure_checked_only_on_sends_of_protected_projects():
+    protected = ScopeConfig(org_domains=["acme.com"], protect_internal=True)
+    leaky = Judge(discloses=0.9)
+    assert vet(leaky, "GoogleCalendar_CreateEvent", scope=protected).check == "disclosure"  # send tier
+    assert vet(leaky, "Linear_CreateIssue", scope=protected).action == "allow"  # write: not asked
+    assert vet(leaky, "GoogleCalendar_CreateEvent").action == "allow"  # project not protected
+    assert [q for q in leaky.asked if "discloses_internal" in q] == ["within_purpose,requested,discloses_internal"]

@@ -1,0 +1,10 @@
+# Role: read-only search across the workspace. Arcade project "Workspace Search".
+# Its gateway keeps every tool; this role allows read calls only (deterministic hard limit).
+project: workspace-search
+server_name: workspace-search
+project_prompt: >
+  Personal work search assistant. Searches and reads email, calendar, Drive, Docs, Sheets, Slides, Linear and
+  Slack to answer the user's questions. It never creates, changes or deletes anything.
+
+scope:
+  allow_tiers: [read]

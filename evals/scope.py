@@ -30,7 +30,7 @@ HERE = Path(__file__).parent
 
 class Project(BaseModel):
     prompt: str
-    deny: list[str] = []
+    scope: ScopeConfig = ScopeConfig()
     tool_tiers: dict[str, Tier] = {}
     args: dict[str, dict[str, ArgRule]] = {}
 
@@ -75,7 +75,7 @@ def blocked(action: Action) -> bool:
 async def run(catalog: Catalog, projects: dict[str, Project], cases: list[Case]) -> list[Outcome]:
     judge = DecisionsJudge()
     vetters = {
-        name: Vetter(ScopeConfig(deny=p.deny), PolicyConfig(tool_tiers=p.tool_tiers, args=p.args), build_cards(catalog, p.tool_tiers), judge)
+        name: Vetter(p.scope, PolicyConfig(tool_tiers=p.tool_tiers, args=p.args), build_cards(catalog, p.tool_tiers), judge)
         for name, p in projects.items()
     }
     outcomes: list[Outcome | None] = [None] * len(cases)
