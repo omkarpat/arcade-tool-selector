@@ -106,17 +106,9 @@ Arcade tools.list ──► Catalog ──► Project scope ──► Shortlist 
 
 The prompt for selection is the latest user message plus a compact summary of the conversation so far. Tools selected in earlier turns get a "sticky" bonus, so follow-ups ("now send it") keep the tool that's mid-task. There's also an escape hatch: an always-on `request_more_tools(need: str)` meta-tool. It lets the LLM ask for a re-selection when the current set is insufficient. This is optional per project.
 
-### 4.3 Judge providers
+### 4.3 Judge
 
-`Judge` is a protocol: `score(request, items: list[GateItem]) -> dict[name, float]`.
-
-| Adapter | How it returns a probability |
-|---|---|
-| OpenAI Decisions API | Native predicate probabilities (what jev-search uses) |
-| OpenAI chat with logprobs | `P(yes)` from the first-token logprobs of a per-item yes/no |
-| Anthropic | Structured output `{name: {needed: bool, confidence: 0–1}}`. Claude exposes no logprobs, so confidence is model-stated; we calibrate on the eval set |
-
-The adapters share a fallback chain on 402, 429 and 5xx, plus a timeout. If every judge fails, the selector degrades to shortlist top-k.
+There's one judge: the OpenAI Decisions API (`gpt-6-luna`), which answers typed predicates with native probabilities, as jev-search does. It answers in about 0.25s at p50 in the scope eval, and costs $0.10 per million input tokens. There's no fallback model. If the judge fails, the vetter fails closed for write, send and destructive calls (§4.6), and the selector degrades to shortlist top-k.
 
 ### 4.4 Caching
 
@@ -238,8 +230,6 @@ policy:
     via: slack                                  # cli | slack | webhook
     timeout_s: 300                              # then deny
   redact_results: [ssn, card_number]
-judge:
-  chain: [openai-decisions:gpt-6-luna]        # default; other adapters optional
 cards:
   overrides: cards/support-bot.yaml           # hand-tuned questions/criteria
 ```
@@ -396,7 +386,6 @@ A tool is exposed only when both pass. One request can make `Gmail_SendEmail` vi
   - BM25 vs. embeddings vs. hybrid
   - generated vs. hand-tuned cards
   - the threshold sweep
-  - each judge adapter
 - **Scope slice (headline security eval).** Example projects (e.g. a meeting scheduler, a support bot) run on the same broad gateway and grants. Each project has labeled cases: a prompt and/or a direct tool call with its arguments, mapped to `allow | deny | ask`. The cases cover:
   - **Same tool, different scope.** `Gmail_SendEmail` replying to a customer who wrote in (allow) vs. sending to an unrelated outside address (deny).
   - **Out-of-purpose toolkits.** A Linear call from a meeting scheduler, even though the user authorized Linear.
@@ -435,7 +424,7 @@ arcade-tool-selector/
 │  ├─ cards.py          # gate question generation + overrides
 │  ├─ project.py        # config load, project scope
 │  ├─ retrieve.py       # BM25 + embeddings + RRF shortlist
-│  ├─ judge/            # base.py, openai_decisions.py, openai_logprobs.py, anthropic.py
+│  ├─ judge.py          # OpenAI Decisions API
 │  ├─ select.py         # gate → threshold/pins/defaults/k → Selection
 │  ├─ policy/           # tiers.py, args.py (rules), intent.py, vetter.py
 │  ├─ audit.py
@@ -479,7 +468,7 @@ Decided so far:
 - **Scope is contextual and judged by the Decisions API,** per prompt (at selection) and per call (at vetting), against the project prompt and the user's request (§4.10). A project can hold broad permissions and use them narrowly, so there's no fixed per-tool scope list. Only admin-set hard limits (`scope.deny`, argument rules) are deterministic, and they only tighten.
 - **The headline security metric is the scope slice:** out-of-scope calls must be blocked 100% of the time (§5).
 - **Per-call scope vetting lands before the selector** (phases 3 → 4).
-- **The default judge is the OpenAI Decisions API** (`gpt-6-luna`), which gives native per-question probabilities, as in jev-search. Phase 3 builds that adapter; logprobs and Anthropic adapters stay optional.
+- **The default judge is the OpenAI Decisions API** (`gpt-6-luna`), which gives native per-question probabilities, as in jev-search. It's the only judge; there's no fallback model.
 
 Still open:
 1. **Granularity.** Should we select individual tools, or allow selecting whole toolkits when most of a toolkit passes?

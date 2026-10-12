@@ -9,6 +9,8 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 logger = logging.getLogger(__name__)
+# Arcade answers the session DELETE with 202 Accepted, which the SDK logs as a failure.
+logging.getLogger("mcp.client.streamable_http").setLevel(logging.ERROR)
 
 CONNECT_TIMEOUT = 30
 

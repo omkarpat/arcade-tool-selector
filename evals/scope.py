@@ -1,4 +1,4 @@
-"""Scope eval: `uv run python evals/scope.py [catalog] [dataset]`. Calls the live Decisions API (one call per case).
+"""Scope eval: `uv run python evals/scope.py`. Calls the live Decisions API once per case.
 
 Each case is a project, the user's own messages and a proposed call, labeled allow / ask / deny:
   blocked     out-of-scope cases (ask or deny) that did not run; must be 100%
@@ -7,8 +7,10 @@ Each case is a project, the user's own messages and a proposed call, labeled all
 plus a threshold sweep over the recorded probabilities.
 """
 
+import argparse
 import json
 import statistics
+import time
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
@@ -51,6 +53,7 @@ class Outcome(BaseModel):
     case: Case
     decision: Decision
     tier: Tier
+    seconds: float
 
 
 def _resolve_dates(text: str) -> str:
@@ -80,8 +83,9 @@ async def run(catalog: Catalog, projects: dict[str, Project], cases: list[Case])
     async def one(i: int, case: Case) -> None:
         vetter = vetters[case.project]
         evidence = Evidence(project_prompt=projects[case.project].prompt, user_messages=case.user)
+        started = time.monotonic()
         decision = await vetter.vet(case.call.tool, case.call.args, evidence)
-        outcomes[i] = Outcome(case=case, decision=decision, tier=vetter.cards[case.call.tool].tier)
+        outcomes[i] = Outcome(case=case, decision=decision, tier=vetter.cards[case.call.tool].tier, seconds=time.monotonic() - started)
 
     async with anyio.create_task_group() as tg:
         for i, case in enumerate(cases):
@@ -102,8 +106,11 @@ def rates(pairs: list[tuple[Action, Action]]) -> tuple[float, float, float]:
 
 def main() -> None:
     load_env()
-    catalog_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "catalogs" / "workspace.json"
-    dataset_path = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "datasets" / "scope_decisions.yaml"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--catalog", type=Path, default=HERE / "catalogs" / "workspace.json")
+    parser.add_argument("--dataset", type=Path, default=HERE / "datasets" / "scope_decisions.yaml")
+    args = parser.parse_args()
+    catalog_path, dataset_path = args.catalog, args.dataset
     catalog = Catalog.model_validate_json(catalog_path.read_text())
     raw = yaml.safe_load(dataset_path.read_text())
     projects = {name: Project.model_validate(p) for name, p in raw["projects"].items()}
@@ -124,7 +131,9 @@ def main() -> None:
 
     block, friction, exact = rates([(o.case.expect, o.decision.action) for o in outcomes])
     print(f"\nblocked {block:.0%} of out-of-scope · friction {friction:.0%} of in-scope · exact {exact:.0%}")
-    print("(ok = exact · ~ = same allow/block outcome, different action · XX = wrong side)\n")
+    print("(ok = exact · ~ = same allow/block outcome, different action · XX = wrong side)")
+    latencies = sorted(o.seconds for o in outcomes if o.decision.probability is not None)
+    print(f"judge latency per call: p50 {statistics.median(latencies):.2f}s · p95 {latencies[int(len(latencies) * 0.95) - 1]:.2f}s\n")
 
     # Hard-limit and judge-failure decisions don't move with the threshold.
     judged = [o for o in outcomes if o.decision.probability is not None]
