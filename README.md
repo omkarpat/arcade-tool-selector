@@ -4,10 +4,10 @@ Prompt-based tool gating for [Arcade](https://arcade.dev). Normally an LLM gets 
 
 The selection paradigm is borrowed from [jev-search](https://github.com/superagents-lab/jev-search): batched yes/no gates with probabilities, plus thresholds, pins and fallback defaults.
 
-> **Status: phase 1 (pass-through proxy).** See [PLAN.md](PLAN.md).
-> - The proxy works today: it serves every gateway tool from a cached, polled catalog, forwards calls, and writes an audit log.
-> - The hooks reach the proxy but don't change anything in Claude Code yet.
-> - Selection (only relevant tools listed) and vetting (allow / deny / ask) land in phases 3–5. The setup below won't change when they do.
+> **Status: phase 3 (per-call scope vetting).** See [PLAN.md](PLAN.md).
+> - The proxy serves every gateway tool from a cached, polled catalog.
+> - Every call is vetted against the project's purpose (`project_prompt` in `ats.yaml`) before it runs. Vetting happens in Claude Code's `PreToolUse` hook, and again inside the proxy for calls that skip the hook.
+> - Selection (only relevant tools listed) lands in phase 4. The setup below won't change when it does.
 
 ## How it works with Claude Code
 
@@ -118,7 +118,7 @@ Merge [`examples/claude-code/settings.json`](examples/claude-code/settings.json)
 
 - Restart Claude Code, then run `/mcp`. The server should be connected through `uv`.
 - Send a prompt that needs a tool. In phase 1 every gateway tool is listed; from phase 4, `/mcp` shows only the selected tools.
-- From phase 3: try a call your policy marks `approve`, e.g. archiving a Linear issue. You should get a permission prompt with the vetter's reason.
+- Ask for something outside your project's purpose (e.g. Linear, in a calendar-only project). The call should be refused with the vetter's reason. A destructive in-scope call (e.g. deleting an event) should show Claude Code's permission prompt.
 - Check the files under `~/.local/share/ats/` (override with `ATS_DATA_DIR`):
   - `audit.jsonl` has one line per call, prompt and catalog change; see [Audit](#audit).
   - `proxy.log` is the proxy's own log.
@@ -132,7 +132,8 @@ Arcade already records every executed tool call: status, timing, and inputs/outp
 |---|---|
 | `call` | Pointer to Arcade's record: `user_id`, `toolkit`, `tool`, `started_at` |
 | `call_needs_authorization` | The user hasn't authorized the toolkit yet. The call never ran, so Arcade has no record. |
-| `call_denied` / `call_failed` | Refused by the proxy, or the gateway was unreachable |
+| `vetted` | A scope decision. Records where it was made (`hook` or `proxy`), the action (allow / ask / deny), which check decided, and the judge's answers. |
+| `call_failed` | The gateway was unreachable |
 | `prompt_seen` | A prompt reached the proxy: session id, prompt id, length. The prompt text is not stored. |
 | `catalog_changed` | Tools added, removed or changed on the gateway |
 
@@ -154,6 +155,37 @@ uv run ats-audit 20
 uv run pytest                                  # offline
 ATS_LIVE=1 uv run pytest -s                    # end-to-end against the gateway in .env
 ```
+
+### How calls are vetted
+
+Your Arcade grant (the gateway plus OAuth scopes) is usually broader than one project needs. Each call is judged against `project_prompt` by OpenAI's Decisions API, using two questions:
+- **`within_purpose`:** does the project's purpose cover this action, with these arguments?
+- **`requested`:** do your own messages ask for this exact call? Text from emails, documents or other tool results never counts.
+
+| Result | Outcome |
+|---|---|
+| Outside the purpose | Your tier's `on_low_scope`: by default, read and write ask, while send and destructive deny |
+| Within the purpose, but unclear you asked | ask |
+| In scope, tier in `policy.approve` (default: destructive) | ask |
+| In scope | Nothing. Claude Code's own permission rules apply; the vetter only tightens. |
+
+Hard limits apply before the judge and always deny: `scope.deny`, and the argument rules in `policy.args` (domains, allowlists, max items).
+- If the judge is unreachable, write, send and destructive calls fail closed.
+- If the proxy is unreachable, the hook blocks the call.
+
+The judge reads only the project prompt, your prompts in this session, today's date and the proposed call. Prompts stay in the proxy's memory; the audit log records only their length.
+
+### Scope evals
+
+```sh
+uv run python evals/scope.py                   # live Decisions API, one call per case
+```
+
+`evals/datasets/scope_decisions.yaml` holds the cases: example projects on the same broad gateway, each with your messages and a proposed call, labelled allow / ask / deny. The report shows:
+- the share of out-of-scope calls blocked (target 100%);
+- the share of in-scope calls held or denied;
+- exact matches;
+- a threshold sweep.
 
 ### Selection evals
 

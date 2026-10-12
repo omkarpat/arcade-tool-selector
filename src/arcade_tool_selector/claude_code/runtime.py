@@ -1,17 +1,46 @@
 import hashlib
 import os
+import socket
 import subprocess
 from pathlib import Path
 
-from pydantic import BaseModel
+from typing import Annotated, Literal
+
+from pydantic import BaseModel, Field, TypeAdapter
 
 
 class PromptSubmitted(BaseModel):
-    """What the UserPromptSubmit hook sends the proxy over the socket."""
+    """UserPromptSubmit → proxy: the user's own words, the evidence scope is judged against."""
 
+    kind: Literal["prompt"] = "prompt"
     session_id: str | None
     prompt_id: str | None
-    chars: int
+    prompt: str
+
+
+class VetRequest(BaseModel):
+    """PreToolUse → proxy: should this call run? Answered with a policy.Decision."""
+
+    kind: Literal["vet"] = "vet"
+    session_id: str | None
+    tool: str  # gateway name, e.g. Gmail_SendEmail
+    arguments: dict
+
+
+HookMessage = TypeAdapter(Annotated[PromptSubmitted | VetRequest, Field(discriminator="kind")])
+
+
+def ask_proxy(data_dir: Path, message: PromptSubmitted | VetRequest, timeout: float) -> str:
+    """Send one message to this session's proxy and return its reply."""
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as sock:
+        sock.settimeout(timeout)
+        sock.connect(str(socket_path(data_dir)))
+        sock.sendall(message.model_dump_json().encode())
+        sock.shutdown(socket.SHUT_WR)
+        chunks = []
+        while chunk := sock.recv(65536):
+            chunks.append(chunk)
+    return b"".join(chunks).decode()
 
 
 def claude_pid() -> int | None:

@@ -1,8 +1,9 @@
 """Stdio MCP server that fronts an Arcade gateway for Claude Code.
 
-Phase 1 is a pass-through: every gateway tool is listed and every call is forwarded.
-It serves the tool list from a shared on-disk cache that a background poll keeps fresh,
-and listens on a local socket the Claude Code hooks connect to.
+Every gateway tool is listed; every call is vetted against the project's purpose before it is
+forwarded (policy.py). The PreToolUse hook asks first over a local socket, so Claude Code can deny
+or prompt; the proxy re-checks every call itself, so a call that skips the hook is still vetted.
+The tool list comes from a shared on-disk cache that a background poll keeps fresh.
 """
 
 import json
@@ -21,9 +22,12 @@ from mcp.server.session import ServerSession
 from mcp.server.stdio import stdio_server
 
 from arcade_tool_selector.audit import Audit
+from arcade_tool_selector.cards import build_cards
 from arcade_tool_selector.catalog import Catalog, CatalogStore, diff
-from arcade_tool_selector.claude_code.runtime import PromptSubmitted, socket_path
+from arcade_tool_selector.claude_code.runtime import HookMessage, PromptSubmitted, VetRequest, socket_path
 from arcade_tool_selector.executions import ExecutionKey
+from arcade_tool_selector.judge import DecisionsJudge
+from arcade_tool_selector.policy import Decision, Evidence, Vetter
 from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import Settings, load_settings
 
@@ -31,6 +35,9 @@ logger = logging.getLogger("ats.proxy")
 
 WATCH_INTERVAL = 5
 JITTER = 0.1
+PROMPTS_KEPT = 20
+# How long a hook decision covers the matching call reaching the proxy (an `ask` waits on the user).
+DECISION_TTL = 600
 
 
 class Proxy:
@@ -47,6 +54,13 @@ class Proxy:
         self._refresh_lock = anyio.Lock()
         self._seen_mtime: float | None = None
         self._tg: TaskGroup | None = None
+        self.judge = DecisionsJudge()
+        self.vetter = self._vetter()
+        # The user's own prompts per Claude Code session, and the session that spoke last.
+        self.prompts: dict[str | None, list[str]] = {}
+        self.last_session: str | None = None
+        # Hook decisions awaiting their call: (tool, arguments) → (decision, time).
+        self.decisions: dict[str, tuple[Decision, float]] = {}
 
     # MCP handlers
 
@@ -58,12 +72,13 @@ class Proxy:
         name = params.name
         if name not in self.catalog.names():
             await self._try_refresh("unknown_tool")
-        if name not in self.catalog.names():
-            self.audit.write("call_denied", tool=name, reason="unknown_tool")
-            return _error(f"{name} is not a tool on this gateway.")
+        arguments = params.arguments or {}
+        decision = await self._recheck(name, arguments)
+        if decision.action != "allow":
+            return _error(f"Blocked by arcade-tool-selector: {decision.reason}")
         key = ExecutionKey.for_gateway_tool(name, self.settings.user_id, datetime.now(UTC))
         try:
-            result = await self.upstream.call_tool(name, params.arguments)
+            result = await self.upstream.call_tool(name, arguments)
         except Exception as e:
             logger.exception("call to %s failed", name)
             self.audit.write("call_failed", tool=name, error=type(e).__name__)
@@ -76,6 +91,34 @@ class Proxy:
             self.audit.write("call", **key.model_dump(mode="json"), is_error=bool(result.is_error))
         return result
 
+    # Vetting
+
+    def _vetter(self) -> Vetter:
+        config = self.settings.config
+        vetter = Vetter(config.scope, config.policy, build_cards(self.catalog, config.policy.tool_tiers), self.judge)
+        for problem in vetter.config_problems():
+            logger.warning("policy config: %s", problem)
+        return vetter
+
+    def _evidence(self, session_id: str | None) -> Evidence:
+        return Evidence(project_prompt=self.settings.config.project_prompt, user_messages=self.prompts.get(session_id, []))
+
+    async def vet(self, tool: str, arguments: dict, session_id: str | None, via: str) -> Decision:
+        decision = await self.vetter.vet(tool, arguments, self._evidence(session_id))
+        self.audit.write("vetted", via=via, tool=tool, arg_keys=sorted(arguments), **decision.model_dump())
+        return decision
+
+    async def _recheck(self, tool: str, arguments: dict) -> Decision:
+        """The proxy's own check. A hook decision for this exact call stands: an `ask` reaching here means the
+        user approved it. Without one the hook was bypassed, so vet now; nobody can be asked, so `ask` denies."""
+        hooked = self.decisions.pop(_call_key(tool, arguments), None)
+        if hooked and time.monotonic() - hooked[1] < DECISION_TTL:
+            return hooked[0] if hooked[0].action == "deny" else hooked[0].model_copy(update={"action": "allow"})
+        decision = await self.vet(tool, arguments, self.last_session, via="proxy")
+        if decision.action == "ask":
+            return decision.model_copy(update={"action": "deny", "reason": decision.reason + " Approval needs Claude Code's prompt."})
+        return decision
+
     # Catalog lifecycle
 
     @asynccontextmanager
@@ -86,6 +129,7 @@ class Proxy:
             cached = self.store.load()
             if cached:
                 self.catalog = cached
+                self.vetter = self._vetter()
                 self._seen_mtime = self.store.mtime()
                 logger.info("serving %d cached tools (%.0fs old)", len(cached.tools), time.time() - cached.fetched_at)
                 if self.store.acquire_lease(self._lease_ttl()):
@@ -109,6 +153,7 @@ class Proxy:
     async def apply(self, new: Catalog, reason: str) -> None:
         changes = diff(self.catalog, new)
         self.catalog = new
+        self.vetter = self._vetter()
         if changes.empty:
             return
         logger.info("catalog changed (%s): +%d -%d ~%d", reason, len(changes.added), len(changes.removed), len(changes.changed))
@@ -171,11 +216,33 @@ class Proxy:
         async with stream:
             # A bad hook message must not take down the proxy (listener errors propagate to the lifespan).
             try:
-                request = PromptSubmitted.model_validate_json(await stream.receive())
-                self.audit.write("prompt_seen", **request.model_dump())
-                await stream.send(json.dumps({"ok": True, "tools": len(self.catalog.tools)}).encode())
+                message = HookMessage.validate_json(b"".join([chunk async for chunk in stream]))
+                if isinstance(message, PromptSubmitted):
+                    await stream.send(self._prompt(message))
+                else:
+                    await stream.send(await self._vet_hook(message))
             except Exception:
                 logger.exception("bad hook message")
+
+    def _prompt(self, message: PromptSubmitted) -> bytes:
+        prompts = self.prompts.setdefault(message.session_id, [])
+        prompts.append(message.prompt)
+        del prompts[:-PROMPTS_KEPT]
+        self.last_session = message.session_id
+        # The prompt text stays in memory; only its size is audited.
+        self.audit.write("prompt_seen", session_id=message.session_id, prompt_id=message.prompt_id, chars=len(message.prompt))
+        return json.dumps({"ok": True, "tools": len(self.catalog.tools)}).encode()
+
+    async def _vet_hook(self, message: VetRequest) -> bytes:
+        if message.tool not in self.catalog.names():
+            await self._try_refresh("unknown_tool")
+        decision = await self.vet(message.tool, message.arguments, message.session_id, via="hook")
+        self.decisions[_call_key(message.tool, message.arguments)] = (decision, time.monotonic())
+        return decision.model_dump_json().encode()
+
+
+def _call_key(tool: str, arguments: dict) -> str:
+    return tool + json.dumps(arguments, sort_keys=True)
 
 
 def _needs_authorization(result: types.CallToolResult) -> bool:

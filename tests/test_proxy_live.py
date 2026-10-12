@@ -23,9 +23,18 @@ def anyio_backend():
     return "asyncio"
 
 
-def proxy_params(data_dir) -> StdioServerParameters:
-    return StdioServerParameters(
-        command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env={**os.environ, "ATS_DATA_DIR": str(data_dir)}
+def proxy_params(data_dir, config=None) -> StdioServerParameters:
+    env = {**os.environ, "ATS_DATA_DIR": str(data_dir), **({"ATS_CONFIG": str(config)} if config else {})}
+    return StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=env)
+
+
+def hook(name: str, data_dir, event: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["uv", "run", "--project", str(REPO_ROOT), "ats-hook", name],
+        input=json.dumps(event),
+        env={**os.environ, "ATS_DATA_DIR": str(data_dir)},
+        capture_output=True,
+        text=True,
     )
 
 
@@ -35,20 +44,15 @@ async def list_and_call(data_dir):
         await session.initialize()
         tools = (await session.list_tools()).tools
         ready = time.monotonic() - started
+        # As in Claude Code, the user's prompt reaches the proxy before any call: it's the scope evidence.
+        submitted = hook("user-prompt-submit", data_dir, {"session_id": "s1", "prompt_id": "p1", "prompt": "Which Google account is my calendar connected to?"})
         whoami = await session.call_tool("GoogleCalendar_WhoAmI", {})
         unknown = await session.call_tool("Nope_NotATool", {})
-        hook = subprocess.run(
-            ["uv", "run", "--project", str(REPO_ROOT), "ats-hook", "user-prompt-submit"],
-            input=json.dumps({"session_id": "s1", "prompt_id": "p1", "prompt": "hello"}),
-            env={**os.environ, "ATS_DATA_DIR": str(data_dir)},
-            capture_output=True,
-            text=True,
-        )
-        return tools, ready, whoami, unknown, hook
+        return tools, ready, whoami, unknown, submitted
 
 
 async def test_pass_through_cache_and_hook(tmp_path):
-    tools, cold, whoami, unknown, hook = await list_and_call(tmp_path)
+    tools, cold, whoami, unknown, submitted = await list_and_call(tmp_path)
     names = {t.name for t in tools}
     print(f"\ncold start: {len(tools)} tools in {cold:.1f}s")
     assert len(tools) > 105, "every tools/list page is served"
@@ -56,7 +60,7 @@ async def test_pass_through_cache_and_hook(tmp_path):
     assert not whoami.is_error, "GoogleCalendar is authorized for ARCADE_USER_ID"
     assert unknown.is_error
 
-    assert hook.returncode == 0 and hook.stdout == "", "phase-1 hooks change nothing in Claude Code"
+    assert submitted.returncode == 0 and submitted.stdout == "", "the prompt hook adds nothing to Claude Code"
     hook_log = (tmp_path / "hook.log").read_text().splitlines()[-1]
     print("hook:", hook_log)
     assert '\\"ok\\": true' in hook_log
@@ -67,7 +71,7 @@ async def test_pass_through_cache_and_hook(tmp_path):
 
     events = [json.loads(line)["event"] for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
     print("audit events:", events)
-    assert {"catalog_changed", "call", "call_denied", "prompt_seen"} <= set(events)
+    assert {"catalog_changed", "call", "vetted", "prompt_seen"} <= set(events)
 
 
 async def test_shared_cache_change_reaches_client(tmp_path):
@@ -106,3 +110,42 @@ async def test_call_resolves_to_arcade_execution(tmp_path):
     print("arcade execution:", execution.id, execution.execution_status)
     assert (execution.toolkit_name, execution.tool_name) == ("GoogleCalendar", "WhoAmI")
     assert execution.execution_status == "completed"
+
+
+async def test_scope_enforced_at_hook_and_proxy(tmp_path):
+    """A meeting-scheduler project on the broad workspace gateway: out-of-scope calls are stopped by the
+    PreToolUse hook, and by the proxy itself when the hook is bypassed."""
+    config = tmp_path / "ats.yaml"
+    config.write_text(
+        "project: meeting-scheduler\nserver_name: workspace-search\nproject_prompt: >\n"
+        "  Meeting scheduler. Reads the user's calendar and creates or moves events. It does not send email\n"
+        "  or use any other app.\n"
+    )
+    async with stdio_client(proxy_params(tmp_path, config)) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        await session.list_tools()
+        hook("user-prompt-submit", tmp_path, {"session_id": "s1", "prompt_id": "p1", "prompt": "What's on my calendar tomorrow?"})
+
+        # Hook: an out-of-scope send is denied before Claude Code runs it (never executed).
+        denied = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": "mcp__workspace-search__Gmail_SendEmail",
+                                                 "tool_input": {"recipient": "x@example.com", "subject": "hi", "body": "hi"}})
+        decision = json.loads(denied.stdout)["hookSpecificOutput"]
+        assert decision["permissionDecision"] == "deny", decision
+
+        # Hook: an in-scope read says nothing (Claude Code's own rules apply), then runs through the proxy.
+        args = {"min_end_datetime": "2026-10-13T00:00:00", "max_start_datetime": "2026-10-14T00:00:00"}
+        allowed = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": "mcp__workspace-search__GoogleCalendar_ListEvents", "tool_input": args})
+        assert allowed.returncode == 0 and allowed.stdout == ""
+        assert not (await session.call_tool("GoogleCalendar_ListEvents", args)).is_error
+
+        # Proxy: a call that skipped the hook is vetted anyway (a read outside the purpose, so safe if it ran).
+        bypassed = await session.call_tool("Linear_ListIssues", {"limit": 1})
+        assert bypassed.is_error and "Blocked by arcade-tool-selector" in bypassed.content[0].text
+
+    vetted = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines() if '"vetted"' in line]
+    print("\n".join(f"{v['via']:<5} {v['tool']:<26} {v['action']:<5} {v['check']:<9} {v['answers']}" for v in vetted))
+    assert {(v["via"], v["tool"], v["action"]) for v in vetted} >= {
+        ("hook", "Gmail_SendEmail", "deny"),
+        ("hook", "GoogleCalendar_ListEvents", "allow"),
+        ("proxy", "Linear_ListIssues", "ask"),
+    }
