@@ -18,6 +18,8 @@ dependencies = [
 ats-proxy = "arcade_tool_selector.proxy.server:main"
 ats-hook = "arcade_tool_selector.claude_code.hook:main"
 ats-audit = "arcade_tool_selector.executions:main"
+ats-doctor = "arcade_tool_selector.doctor:main"
+ats-demo = "arcade_tool_selector.demo:main"
 
 [project.optional-dependencies]
 otel = [

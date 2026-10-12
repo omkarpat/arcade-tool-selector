@@ -48,6 +48,3 @@ policy:
       emails: { domains: [example.com] }
     Gmail_TriageEmails:
       email_ids: { max_items: 20 }
-
-judge:
-  chain: [openai-decisions:gpt-6-luna]      # OpenAI Decisions API: native per-question probabilities

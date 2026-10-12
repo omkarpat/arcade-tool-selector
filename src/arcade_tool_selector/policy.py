@@ -141,9 +141,10 @@ class Vetter:
 def _scope_input(card: ToolCard, arguments: dict, evidence: Evidence) -> str:
     asked = "\n".join(f"- {m}" for m in evidence.user_messages[-10:]) or "- (no user message yet)"
     # Requests like "tomorrow" can only be checked against arguments with today's date in hand.
-    now = datetime.now().astimezone()
+    # Date only: a clock time would change the input (and the answers) minute to minute.
+    today = datetime.now().astimezone()
     return (
-        f"Now: {now:%A %Y-%m-%d %H:%M} ({now.tzname()})\n\n"
+        f"Today: {today:%A %Y-%m-%d} ({today.tzname()})\n\n"
         f"Project purpose:\n{evidence.project_prompt.strip()}\n\n"
         f"What the user asked, in their own messages (oldest first):\n{asked}\n\n"
         f"Proposed tool call: {card.qualified_name} ({card.tier} tier)\n"
