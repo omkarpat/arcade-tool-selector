@@ -261,7 +261,7 @@ cards:
 
 This is a spike in phase 1. The fallback is to key by `cwd` and use the most recently initialized proxy.
 
-**Upstream auth.** The proxy authenticates to a gateway in **Arcade Headers** mode, sending `Authorization: Bearer <ARCADE_API_KEY>` plus `Arcade-User-ID`. Per-tool OAuth (Gmail, Slack, …) still happens through Arcade: the authorization URL comes back in the tool result and the proxy passes it through. We'll use a separate test gateway, so the existing `workspace-search` gateway is untouched until we cut over.
+**Upstream auth.** The proxy authenticates to a gateway in **Arcade Headers** mode, sending `Authorization: Bearer <ARCADE_API_KEY>` plus `Arcade-User-ID`. The proxy loads the key, user id, gateway URL and judge keys itself from an env file (`~/.config/ats/env`, mode 600, overridable via `ATS_ENV_FILE`). They're never passed through Claude Code's config, which would store them in plain text in `~/.claude.json`. Hooks need no secrets. The plugin's `sensitive` userConfig (secure storage) replaces the file in phase 6. Per-tool OAuth (Gmail, Slack, …) still happens through Arcade: the authorization URL comes back in the tool result and the proxy passes it through. We'll use a separate test gateway, so the existing `workspace-search` gateway is untouched until we cut over.
 
 **Catalog source.** In this mode the catalog is the gateway's own MCP `tools/list`, i.e. exactly the gateway's Allowed Tools. It's enriched with `arcadepy` `tools.get` for toolkit, version and auth requirements, which feed the risk tiers and the scope report. So **the Arcade project and gateway is the project-level outer boundary**, and the YAML config only adds the project prompt, selection settings and policy.
 
@@ -378,5 +378,5 @@ Still open:
 4. **Name.** Is `arcade-tool-selector` fine, now that the project also vets calls?
 5. **Policy authoring.** Do we use YAML with built-in rule types (planned), or an existing policy engine such as OPA/Rego or Cedar so security teams can reuse their tooling? We could start with YAML and design rules to compile to Cedar later.
 6. **Default posture.** Should an unlabelled tool default to `vet` (safer, more LLM calls) or to its auto-labelled tier?
-7. **Upstream auth.** Is Arcade Headers mode (an API key held by the proxy) acceptable for personal use? Or should the proxy run the gateway's OAuth flow itself, so no long-lived key sits on disk?
+7. **Upstream auth.** Is an API key in a mode-600 env file, read only by the proxy, acceptable until the plugin moves it to secure storage? Or should the proxy run the gateway's OAuth flow itself, so no long-lived key sits on disk at all?
 8. **Test gateway.** Which toolkits should the test gateway carry? A mirror of `workspace-search` (Gmail, Calendar, Drive, Linear, Slack) gives a realistic catalog with read, send and destructive tools.

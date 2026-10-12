@@ -41,29 +41,34 @@ Copy the gateway URL (`https://api.arcade.dev/mcp/<slug>`).
 
 If you already use a gateway directly from Claude Code, create a **new** gateway with the same tools rather than changing the auth mode on the existing one. You can then switch back at any time.
 
-### 2. Get the code and set environment variables
+### 2. Get the code and add your keys
 
 ```sh
 git clone https://github.com/omkarpat/arcade-tool-selector ~/arcade-tool-selector
 cd ~/arcade-tool-selector && uv sync
+
+mkdir -p ~/.config/ats
+cp .env.example ~/.config/ats/env
+chmod 600 ~/.config/ats/env
+$EDITOR ~/.config/ats/env        # ARCADE_API_KEY, ARCADE_USER_ID, ATS_GATEWAY_URL, judge key
 ```
 
-Add these to your shell profile, or to whatever launches Claude Code:
+Only `ats-proxy` reads this file. It isn't passed through Claude Code's config, which matters for two reasons:
+- `claude mcp add -e KEY=…` would store the key in plain text in `~/.claude.json`.
+- Exporting the key from your shell profile would expose it to every process you start.
+
+To keep the file somewhere else, set `ATS_ENV_FILE`. Real environment variables override the file's values, which is useful for CI.
+
+The only variable Claude Code itself needs is the repo path, which the MCP entry and the hooks use:
 
 ```sh
-export ATS_HOME=~/arcade-tool-selector
-export ATS_GATEWAY_URL=https://api.arcade.dev/mcp/<slug>
-export ARCADE_API_KEY=arc_...
-export ARCADE_USER_ID=you@example.com      # the user Arcade authorizes tools for
-export ATS_CONFIG=~/.config/ats/workspace-search.yaml
-export ANTHROPIC_API_KEY=...               # judge model; match judge.chain
+export ATS_HOME=~/arcade-tool-selector     # in your shell profile
 ```
 
 ### 3. Write the project config
 
 ```sh
-mkdir -p ~/.config/ats
-cp $ATS_HOME/examples/claude-code/ats.yaml $ATS_CONFIG
+cp $ATS_HOME/examples/claude-code/ats.yaml ~/.config/ats/workspace-search.yaml
 ```
 
 Then edit these fields:
@@ -71,7 +76,7 @@ Then edit these fields:
 - `server_name`: must match the MCP server name you use in step 4.
 - `policy.args`: your Linear team keys, allowed Slack channels and email domains.
 
-See [PLAN.md §4.6–4.7](PLAN.md) for the policy model.
+`ATS_CONFIG` in the env file points at this file. See [PLAN.md §4.6–4.7](PLAN.md) for the policy model.
 
 ### 4. Point Claude Code at the proxy
 
@@ -81,17 +86,14 @@ Replace the direct gateway entry with the proxy under the **same name**.
 
 ```sh
 claude mcp remove workspace-search
-claude mcp add workspace-search \
-  -e ATS_GATEWAY_URL=$ATS_GATEWAY_URL -e ARCADE_API_KEY=$ARCADE_API_KEY \
-  -e ARCADE_USER_ID=$ARCADE_USER_ID -e ATS_CONFIG=$ATS_CONFIG \
-  -- uv run --project $ATS_HOME ats-proxy
+claude mcp add workspace-search -- uv run --project $ATS_HOME ats-proxy
 ```
 
 **Or a project `.mcp.json`**, which is checked into a repo:
 - Before: [`examples/claude-code/mcp.before.json`](examples/claude-code/mcp.before.json)
 - After: [`examples/claude-code/mcp.json`](examples/claude-code/mcp.json)
 
-Claude Code expands the `${VAR}` references from your environment, so no secrets go in the file.
+Neither form carries secrets; the proxy loads them from the env file.
 
 ### 5. Add the hooks
 

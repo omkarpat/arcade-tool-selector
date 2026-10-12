@@ -3,13 +3,7 @@
     "workspace-search": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--project", "${ATS_HOME}", "ats-proxy"],
-      "env": {
-        "ATS_GATEWAY_URL": "${ATS_GATEWAY_URL}",
-        "ARCADE_API_KEY": "${ARCADE_API_KEY}",
-        "ARCADE_USER_ID": "${ARCADE_USER_ID}",
-        "ATS_CONFIG": "${ATS_CONFIG}"
-      }
+      "args": ["run", "--project", "${ATS_HOME}", "ats-proxy"]
     }
   }
 }
