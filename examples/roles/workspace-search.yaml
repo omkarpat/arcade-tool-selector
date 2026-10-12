@@ -1,10 +1,36 @@
-# Role: read-only search across the workspace. Arcade project "Workspace Search".
-# Its gateway keeps every tool; this role allows read calls only (deterministic hard limit).
+# Role: workspace search that can also write Linear issues. Arcade project "Workspace Search".
+# Its gateway keeps every tool. This role reads everything, writes only Linear issues,
+# and never deletes or archives anything (deterministic hard limits).
 project: workspace-search
 server_name: workspace-search
 project_prompt: >
   Personal work search assistant. Searches and reads email, calendar, Drive, Docs, Sheets, Slides, Linear and
-  Slack to answer the user's questions. It never creates, changes or deletes anything.
+  Slack to answer the user's questions. It can create and update Linear issues and comment on them. It never
+  deletes or archives anything, and doesn't create or change anything outside Linear issues.
 
 scope:
   allow_tiers: [read]
+  allow:                                  # Linear issue writes, past the read-only limit
+    - Linear_CreateIssue
+    - Linear_UpdateIssue
+    - Linear_TransitionIssueState
+    - Linear_AddComment
+    - Linear_ReplyToComment
+    - Linear_UpdateComment
+    - Linear_ResolveComment
+    - Linear_CreateIssueRelation
+    - Linear_UpsertAttachment
+    - Linear_ManageIssueSubscription
+  deny:                                   # never, even if added to allow later
+    - Linear_ArchiveIssue
+    - Linear_ArchiveProject
+    - Linear_ArchiveInitiative
+    - Linear_DeleteLabel
+    - Linear_RemoveAttachment
+    - Linear_RemoveIssueRelation
+    - Linear_TrashDocument
+    - Gmail_TrashEmail
+
+policy:
+  tool_tiers:
+    Linear_ArchiveIssue: destructive

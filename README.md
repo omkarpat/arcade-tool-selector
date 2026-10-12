@@ -132,14 +132,14 @@ Treat each Arcade project as a role, with permissions at three levels:
 | Level | What it controls | Enforced by |
 |---|---|---|
 | Tools | which tools the role can call at all | the project's **gateway allow-list**, plus its **project API key**: Arcade rejects a key from another project with a 403 |
-| Actions | read vs. create, update, delete | `scope.allow_tiers` (deterministic), plus the gateway allow-list |
+| Actions | read vs. create, update, delete | `scope.allow_tiers` with per-tool exceptions in `scope.allow` (deterministic), plus the gateway allow-list |
 | Data | which records, recipients and content | `policy.args` (e.g. Linear team `SUP`, Slack `#support`), the per-call purpose check, and `scope.protect_internal` |
 
 [`examples/roles/`](examples/roles/) has three roles:
 
 | Role | Gateway tools | Rules in the vetter |
 |---|---|---|
-| **Workspace Search** | all | read-only: `allow_tiers: [read]` denies every write, send or delete without asking the judge |
+| **Workspace Search** | all | reads everything and writes only Linear issues: `allow_tiers: [read]`, plus `allow` for issue create, update, transition and comment. Archive and delete tools are in `deny`. Every other write, send or delete is refused without asking the judge. |
 | **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | the purpose check lets replies through only when they're about meetings; invites stay inside the org |
 | **Support Bot** | Gmail read and reply, Linear tickets, Slack | `protect_internal` adds a third question to every send: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. Plus `SUP`-team and `#support`-only rules. |
 
@@ -158,7 +158,7 @@ Both evals run against a local snapshot of your gateway's catalog (gitignored). 
 
 ```sh
 uv run python evals/snapshot.py               # every tools/list page from your gateway → evals/catalogs/workspace.json
-uv run python evals/scope.py                  # scope decisions, live judge (54 cases, ~15s)
+uv run python evals/scope.py                  # scope decisions, live judge (58 cases, ~15s)
 uv run python evals/run.py                    # tool-selection baselines (offline)
 ```
 
@@ -169,12 +169,12 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 - injection
 - hard limits
 - supporting lookups
-- role limits (writes from a read-only role, non-meeting replies)
+- role limits (Linear-issue writes allowed and archive/delete refused in Workspace Search, non-meeting replies)
 - internal-detail disclosure to customers
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 21% (5 cases: 4 held as ask, 1 denied) | 87% | p50 0.25s · p95 0.35s |
+| **100%** | 19% (5 cases: 4 held as ask, 1 denied) | 88% | p50 0.25s · p95 0.35s |
 
 These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
 
