@@ -23,6 +23,8 @@ selection:
   request_more_tools: true
 
 policy:
+  tool_tiers:                             # tier overrides; defaults come from Arcade's metadata
+    Linear_ArchiveIssue: destructive      # reversible in Linear, but treat as destructive here
   tiers:                                  # default action per risk tier
     read: allow
     write: vet

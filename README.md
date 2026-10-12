@@ -155,6 +155,19 @@ uv run pytest                                  # offline
 ATS_LIVE=1 uv run pytest -s                    # end-to-end against the gateway in .env
 ```
 
+### Selection evals
+
+```sh
+uv run python evals/snapshot.py workspace      # snapshot your gateway's catalog from the proxy's cache (gitignored)
+uv run python evals/run.py                     # baselines on that snapshot
+```
+
+`evals/datasets/tool_selection.yaml` is the tool-selection (relevance) dataset: labeled prompts. Each one lists the tools it needs; where several tools would each do, any one counts. Each selector is scored on four measures:
+- recall
+- prompts fully solved
+- precision
+- schema tokens handed to the model
+
 ### Plugin install (phase 6)
 
 Once packaged, steps 2–5 collapse to:
