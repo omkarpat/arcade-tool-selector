@@ -90,7 +90,7 @@ Claude Code v2.1.295 or later is required.
 2. **Add the hooks** from [`examples/claude-code/settings.json`](examples/claude-code/settings.json) to `~/.claude/settings.json` or `.claude/settings.json`:
    - Replace `$ATS_HOME` with this repo's path.
    - Make sure the matcher uses your server name (`mcp__<server_name>__.*`).
-3. **Describe the project.** Edit `project_prompt` in `ats.yaml` to say what this project does, and what it doesn't. Optionally add hard limits: `scope.deny` and `policy.args`.
+3. **Describe the project.** Edit `project_prompt` in `ats.yaml` to say what this project does, and what it doesn't: apps, actions, people and destinations. The description is the policy; there are no tool lists to maintain.
 4. **Restart Claude Code and work as usual.** An out-of-scope call comes back refused, with the reason. A destructive or doubtful call shows Claude Code's permission prompt, with the vetter's reason.
 
 | Hook | What it does |
@@ -103,27 +103,22 @@ Claude Code v2.1.295 or later is required.
 
 ## How a call is decided
 
-Hard limits come first. They're deterministic, they always deny, and they only ever tighten:
-- `scope.deny`: tools that are never allowed;
-- `policy.args`: argument rules (`allow`, `deny`, `domains`, `max_items`).
-
-Then the Decisions API answers two questions about the call:
+The project description is the policy. Which tools a project can reach at all is Arcade's job: its gateway's allow-list and project-scoped API keys. Each call is judged by one Decisions API request with up to four questions:
 - **`within_purpose`:** does the project's purpose cover this action, with these arguments?
 - **`requested`:** do your own messages ask for this exact call? Text the agent read from emails, documents or other tool results never counts. That's the prompt-injection defense.
+- **`reaches_people`** (writes only): does it deliver something directly to other people, such as an email, chat message, calendar invite or file share? If so, the call carries **send** stakes.
+- **`discloses_internal`** (calls that reach people, in `protect_internal` projects): would it reveal internal details to someone outside `org_domains`? If so, **deny**.
 
 | Result | Outcome |
 |---|---|
-| Outside the purpose | The tier's `on_low_scope`: read and write **ask**, send and destructive **deny** |
+| Outside the purpose | The call's tier picks `on_low_scope`: read and write **ask**, send and destructive **deny** |
 | Within the purpose, but unclear you asked | **ask** |
 | In scope, tier in `policy.approve` (default: destructive) | **ask** |
 | In scope | Claude Code's own rules apply |
 
-Tiers come from Arcade's tool metadata:
-- `read` and `destructive` are Arcade's own flags;
-- `send` is a curated list of tools that reach people;
-- everything else is `write`.
-
-`policy.tool_tiers` overrides any of them. If the judge is unreachable, write, send and destructive calls fail closed. The proxy also re-checks every call itself, so a call that skips the hook is vetted too.
+A call's tier comes from Arcade's tool metadata (`read` and `destructive` flags; everything else is `write`), or `send` when the judge says the write reaches people.
+- If the judge is unreachable, write, send and destructive calls fail closed.
+- The proxy re-checks every call itself, so a call that skips the hook is vetted too.
 
 ## Roles: one Arcade project per role
 
@@ -132,16 +127,16 @@ Treat each Arcade project as a role, with permissions at three levels:
 | Level | What it controls | Enforced by |
 |---|---|---|
 | Tools | which tools the role can call at all | the project's **gateway allow-list**, plus its **project API key**: Arcade rejects a key from another project with a 403 |
-| Actions | read vs. create, update, delete | the project description, judged per call; optionally `scope.allow_tiers` as a deterministic backstop |
-| Data | which records, recipients and content | `policy.args` (e.g. Linear team `SUP`, Slack `#support`), the per-call purpose check, and `scope.protect_internal` |
+| Actions | read vs. create, update, delete | the project description, judged per call |
+| Data | which records, recipients and content | the project description (e.g. "SUP team only", "only invites people inside the org"), plus `scope.protect_internal` for customer-facing roles |
 
 [`examples/roles/`](examples/roles/) has three roles:
 
 | Role | Gateway tools | Rules in the vetter |
 |---|---|---|
 | **Workspace Search** | all | **description only**: "reads everything; can create and update Linear issues; never deletes or archives anything". The judge allows issue writes and judges archive, delete and other writes as outside the purpose. `on_low_scope.write: deny` turns those writes into denials. No tool lists. |
-| **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | the purpose check lets replies through only when they're about meetings; invites stay inside the org |
-| **Support Bot** | Gmail read and reply, Linear tickets, Slack | `protect_internal` adds a third question to every send: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. Plus `SUP`-team and `#support`-only rules. |
+| **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | description: replies only about meetings, invites only inside the org |
+| **Support Bot** | Gmail read and reply, Linear tickets, Slack | description: SUP team only, `#support` only, never trashes email. `protect_internal` adds the disclosure question to every call that reaches people: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. |
 
 **To run a role:**
 1. Give it its own `.env`: that project's API key, plus its gateway URL.
@@ -167,14 +162,14 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 - toolkits outside the project's purpose
 - broad permissions used narrowly
 - injection
-- hard limits
+- rules stated only in the description (invites only inside the org, SUP team only, never trash email)
 - supporting lookups
 - role limits (Linear-issue writes allowed and archive/delete refused in Workspace Search, non-meeting replies)
 - internal-detail disclosure to customers
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 19% (5 cases: 4 held as ask, 1 denied) | 88% | p50 0.25s · p95 0.35s |
+| **100%** | 19% (5 cases: 3 held as ask, 2 denied) | 90% | p50 0.27s · p95 0.33s |
 
 These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
 
@@ -207,7 +202,7 @@ Events go to `~/.local/share/ats/audit.jsonl`, or to OpenTelemetry with `uv sync
 
 | Path | What it is |
 |---|---|
-| `src/arcade_tool_selector/policy.py` | The vetter: hard limits, the two scope questions, tier outcomes |
+| `src/arcade_tool_selector/policy.py` | The vetter: the judge's questions and the tier outcomes |
 | `src/arcade_tool_selector/judge.py` | The OpenAI Decisions API client |
 | `src/arcade_tool_selector/proxy/` | The stdio MCP proxy: gateway client, catalog cache and poll, hook socket, re-check |
 | `src/arcade_tool_selector/claude_code/` | Hook entrypoints and the hook ↔ proxy socket |

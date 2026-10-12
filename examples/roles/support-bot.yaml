@@ -1,24 +1,14 @@
 # Role: customer support. Arcade project "Support Bot".
 # Gateway: Gmail read + reply, Linear tickets, Slack messages.
-# Customer-facing: replies must never reveal internal details (internal tickets, internal chat,
-# other customers, employees, roadmap, internal pricing or links) to people outside the organization.
+# Customer-facing: calls that reach people outside the organization must never reveal internal details
+# (internal tickets or chat, other customers, employees, roadmap, internal pricing or links).
 project: support-bot
 server_name: support-bot
 project_prompt: >
   Customer support agent. Reads customer emails and replies to customers in the threads they started, about
-  their own issue. Files and updates support tickets in the Linear team SUP and posts updates in the #support
-  Slack channel.
+  their own issue. Files and updates support tickets in the Linear team SUP only, and posts updates in the
+  #support Slack channel only. Never deletes or trashes email.
 
 scope:
-  deny: [Gmail_TrashEmail]
   org_domains: [example.com]              # your organization's email domains
   protect_internal: true                  # outbound calls checked for internal-detail disclosure
-
-policy:
-  tool_tiers:
-    Linear_ArchiveIssue: destructive
-  args:
-    Linear_CreateIssue:
-      team: { allow: [SUP] }              # your support team's key
-    Slack_SendMessage:
-      channel_name: { allow: [support, "#support"] }

@@ -16,13 +16,12 @@ if not SNAPSHOT.exists():
 CATALOG = Catalog.model_validate_json(SNAPSHOT.read_text())
 
 
-def test_tiers_from_arcade_metadata_and_overrides():
-    cards = {c.name: c for c in build_cards(CATALOG, {"Linear_ArchiveIssue": "destructive"})}
+def test_tiers_from_arcade_metadata():
+    cards = {c.name: c for c in build_cards(CATALOG)}
     assert cards["GoogleCalendar_ListEvents"].tier == "read"
     assert cards["Linear_CreateIssue"].tier == "write"
-    assert cards["Gmail_SendEmail"].tier == "send"
+    assert cards["Gmail_SendEmail"].tier == "write"  # whether a write reaches people is judged per call
     assert cards["Gmail_TrashEmail"].tier == "destructive"
-    assert cards["Linear_ArchiveIssue"].tier == "destructive"
     assert Counter(c.tier for c in cards.values())[None] == 0
 
     send = cards["Gmail_SendEmail"]

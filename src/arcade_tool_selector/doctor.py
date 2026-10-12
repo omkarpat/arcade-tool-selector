@@ -11,10 +11,7 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
-from arcade_tool_selector.cards import build_cards
-from arcade_tool_selector.catalog import Catalog
 from arcade_tool_selector.judge import DecisionsJudge
-from arcade_tool_selector.policy import Vetter
 from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
@@ -72,13 +69,6 @@ async def check() -> None:
 
     error = await judge_error()
     report(error is None, "scope judge answers (OpenAI Decisions API, gpt-6-luna)", f"the key needs Decisions API access: {error}")
-
-    catalog_file = settings.data_dir / "catalog"
-    cached = next(iter(catalog_file.glob("*.json")), None) if catalog_file.exists() else None
-    if cached:
-        vetter = Vetter(settings.config.scope, settings.config.policy, build_cards(Catalog.model_validate_json(cached.read_text())), None)
-        for problem in vetter.config_problems() or [None]:
-            report(problem is None, "policy rules match the catalog" if problem is None else problem, "fix the name in ats.yaml")
 
     claude = shutil.which("claude")
     if not claude:

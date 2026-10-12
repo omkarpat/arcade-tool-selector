@@ -10,8 +10,6 @@ project_prompt: >
   deletes or archives anything, and doesn't create or change anything outside Linear issues.
 
 policy:
-  tool_tiers:
-    Linear_ArchiveIssue: destructive
   on_low_scope:                           # outside the purpose: deny writes too (default asks)
     read: ask
     write: deny
