@@ -190,7 +190,7 @@ Arcade already logs every executed call, so the proxy doesn't duplicate that. It
 
 ## Credits
 
-The idea and design are mine. That covers judging each call against a project's purpose instead of granting tools up front, keeping that purpose in Arcade where the agent can't see it, the four questions and the risk tiers, and the evals I used to tune the system against real sessions.
+The idea and design are my own i.e. judging each call against a project's purpose instead of granting tools up front, keeping that purpose in Arcade where the agent can't see it, the four questions and the risk tiers, and the evals I used to tune the system against real sessions.
 
 The approach of yes/no questions answered with probabilities and a threshold was inspired by [jev-search](https://github.com/superagents-lab/jev-search). No code was copied.
 
