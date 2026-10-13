@@ -98,10 +98,10 @@ tail -f ~/.local/share/ats/$ATS_ROLE/audit.jsonl | jq -c 'select(.event=="vetted
 **Using it in another project.** Register the proxy under your gateway's existing server name so tool names and permission rules stay the same:
 
 ```sh
-claude mcp add workspace-search -e ATS_ROLE=workspace-search -- /path/to/arcade-tool-selector/.venv/bin/ats-proxy
+claude mcp add workspace-search -- /path/to/arcade-tool-selector/.venv/bin/ats-proxy
 ```
 
-Then copy the hooks from [`examples/claude-code/settings.json`](examples/claude-code/settings.json), with `ATS_HOME` set to this repo's path. To undo it, remove the server, re-add your gateway URL with `--transport http`, and delete the hooks.
+Then copy the hooks from [`examples/claude-code/settings.json`](examples/claude-code/settings.json), with `ATS_HOME` set to this repo's path. It's opt-in per session: `ATS_ROLE=workspace-search claude` runs the proxy and hooks; plain `claude` skips the hooks and the server fails to start. To undo it, remove the server, re-add your gateway URL with `--transport http`, and delete the hooks.
 
 ## How a call is decided
 

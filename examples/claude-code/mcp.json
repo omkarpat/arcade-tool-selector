@@ -2,10 +2,7 @@
   "mcpServers": {
     "workspace-search": {
       "type": "stdio",
-      "command": "${ATS_HOME}/.venv/bin/ats-proxy",
-      "env": {
-        "ATS_ROLE": "workspace-search"
-      }
+      "command": "${ATS_HOME}/.venv/bin/ats-proxy"
     }
   }
 }
