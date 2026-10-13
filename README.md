@@ -10,7 +10,7 @@ It's a small local proxy that sits between Claude Code and the Arcade gateway. B
 
 ```
 Claude Code ──stdio──► ats-proxy ──────────────────────────────► Arcade MCP gateway
-     │                   ▲  catalog cache · vetter · audit        (Arcade Headers auth)
+     │                   ▲  vetter · audit                        (Arcade Headers auth)
      ├─ UserPromptSubmit ┘  your prompt = the evidence calls are judged against
      └─ PreToolUse ─────►   vet the call: allow · ask (permission prompt) · deny
 ```
@@ -87,7 +87,7 @@ You need Claude Code v2.1.295 or later. This repo is already set up as a Claude 
 
 Start it with `ATS_ROLE=<role> claude`. The first time, trust the folder and approve the `arcade` server. To switch roles, restart with a different `ATS_ROLE`. If you start without one, every prompt is blocked until you do.
 
-After that, work as usual. Out-of-scope calls come back refused with a reason, and destructive or borderline calls show the normal permission prompt. The proxy only ever tightens Claude Code's own rules; it never loosens them. If the proxy is unreachable, calls are blocked. Claude Code's built-in tools (Bash, WebFetch and so on) aren't covered and keep their usual prompts.
+After that, work as usual. Out-of-scope calls come back refused with a reason, and destructive or borderline calls show the normal permission prompt. The proxy only ever tightens Claude Code's own rules; it never loosens them. The proxy runs only calls its hook vetted, and if the proxy is unreachable, prompts and calls are blocked. Claude Code's built-in tools (Bash, WebFetch and so on) aren't covered and keep their usual prompts.
 
 To watch decisions as they happen:
 
@@ -98,10 +98,10 @@ tail -f ~/.local/share/ats/$ATS_ROLE/audit.jsonl | jq -c 'select(.event=="vetted
 **Using it in another project.** Register the proxy under your gateway's existing server name so tool names and permission rules stay the same:
 
 ```sh
-claude mcp add workspace-search -e ATS_ROLE=workspace-search -- uv run --project /path/to/arcade-tool-selector ats-proxy
+claude mcp add workspace-search -e ATS_ROLE=workspace-search -- /path/to/arcade-tool-selector/.venv/bin/ats-proxy
 ```
 
-Then copy the hooks from [`examples/claude-code/settings.json`](examples/claude-code/settings.json). To undo it, remove the server, re-add your gateway URL with `--transport http`, and delete the hooks.
+Then copy the hooks from [`examples/claude-code/settings.json`](examples/claude-code/settings.json), with `ATS_HOME` set to this repo's path. To undo it, remove the server, re-add your gateway URL with `--transport http`, and delete the hooks.
 
 ## How a call is decided
 
@@ -147,7 +147,7 @@ ATS_ROLES='{
 }'
 ```
 
-Then run `ATS_ROLE=support-bot claude`. Each role keeps its own cache and audit log under `~/.local/share/ats/<role>`. A missing key, an unknown role or a gateway without instructions fails loudly; nothing falls back to a default.
+Then run `ATS_ROLE=support-bot claude`. Each role keeps its own audit log under `~/.local/share/ats/<role>`. A missing key, an unknown role or a gateway without instructions fails loudly; nothing falls back to a default.
 
 ## Evals
 
@@ -191,7 +191,7 @@ Arcade already logs every executed call, so the proxy doesn't duplicate that. It
 | Path | What's there |
 |---|---|
 | `src/arcade_tool_selector/policy.py` | The judge's questions and how answers become allow / ask / deny |
-| `src/arcade_tool_selector/proxy/` | The MCP proxy itself |
+| `src/arcade_tool_selector/proxy.py` | The MCP proxy itself |
 | `src/arcade_tool_selector/claude_code/` | The Claude Code hooks |
 | `src/arcade_tool_selector/platform.py` | Reads a role's purpose from Arcade |
 | `src/arcade_tool_selector/judge.py` | The Decisions API client |

@@ -9,6 +9,7 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import anyio
 from mcp.client.session import ClientSession
@@ -16,10 +17,10 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import BaseModel
 
 from arcade_tool_selector.cards import build_cards
-from arcade_tool_selector.catalog import CatalogStore
-from arcade_tool_selector.claude_code.runtime import PromptSubmitted, VetRequest, ask_proxy
+from arcade_tool_selector.catalog import Catalog
+from arcade_tool_selector.claude_code.link import PromptSubmitted, VetRequest, ask_proxy
 from arcade_tool_selector.policy import Decision
-from arcade_tool_selector.settings import REPO_ROOT, load_settings
+from arcade_tool_selector.settings import load_settings
 
 MARKS = {"allow": "✓ allow", "ask": "? ask  ", "deny": "✗ deny "}
 
@@ -72,19 +73,19 @@ async def run() -> None:
     settings = load_settings()
     if settings.role != "meeting-scheduler":
         sys.exit(f"ats-demo replays a meeting-scheduler script; run it with ATS_ROLE=meeting-scheduler (got {settings.role!r})")
-    root = settings.data_dir
-    domain = settings.user_id.rsplit("@", 1)[-1]
-    params = StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=dict(os.environ))
+    domain = settings.org_domain
+    # Started as Claude Code starts it: a direct child, so its socket is keyed by this process's pid.
+    params = StdioServerParameters(command=str(Path(sys.executable).parent / "ats-proxy"), env=dict(os.environ))
+    me = os.getpid()
     print("Role: meeting-scheduler (its purpose is its gateway's instructions in the Arcade dashboard)\n")
 
     async with stdio_client(params, errlog=open(os.devnull, "w")) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
-        await session.list_tools()
-        tiers = {c.name: c.tier for c in build_cards(CatalogStore(root, settings.gateway_key).load())}
+        tiers = {c.name: c.tier for c in build_cards(Catalog(tools=(await session.list_tools()).tools))}
         for step in script(settings.user_id, domain):
             # What Claude Code's UserPromptSubmit and PreToolUse hooks send.
-            await anyio.to_thread.run_sync(ask_proxy, root, PromptSubmitted(session_id="demo", prompt_id=None, prompt=step.prompt), 5)
-            reply = await anyio.to_thread.run_sync(ask_proxy, root, VetRequest(session_id="demo", tool=step.tool, arguments=step.arguments), 30)
+            await anyio.to_thread.run_sync(ask_proxy, me, PromptSubmitted(session_id="demo", prompt=step.prompt), 5)
+            reply = await anyio.to_thread.run_sync(ask_proxy, me, VetRequest(session_id="demo", tool=step.tool, arguments=step.arguments), 30)
             decision = Decision.model_validate_json(reply)
             print(f"you> {step.prompt}")
             print(f"     {step.tool} ({decision.tier or tiers.get(step.tool) or 'not on this gateway'})" + (f" · {step.note}" if step.note else ""))
@@ -95,7 +96,7 @@ async def run() -> None:
             elif decision.action == "ask":
                 print("     → Claude Code would show its permission prompt with this reason")
             print()
-    print(f"Audit log: {root / 'audit.jsonl'}")
+    print(f"Audit log: {settings.data_dir / 'audit.jsonl'}")
 
 
 def main() -> None:

@@ -6,13 +6,10 @@ import subprocess
 import sys
 
 import anyio
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 
+from arcade_tool_selector import gateway
 from arcade_tool_selector.judge import DecisionsJudge
 from arcade_tool_selector.platform import read_purpose
-from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import load_settings
 
 MIN_CLAUDE_CODE = (2, 1, 295)  # hooks' onFailure
@@ -23,16 +20,6 @@ def report(ok: bool, what: str, fix: str = "") -> None:
     global problems
     problems += not ok
     print(f"{'✓' if ok else '✗'} {what}" + (f"\n    → {fix}" if fix and not ok else ""))
-
-
-async def list_gateway(url: str, headers: dict) -> int:
-    async with (
-        create_mcp_http_client(headers=headers) as http,
-        streamable_http_client(url, http_client=http) as (read, write),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        return len(await Upstream._list_all(session))
 
 
 async def judge_error(api_key: str) -> str | None:
@@ -51,9 +38,8 @@ async def check() -> None:
         return
     report(True, f"role {settings.role!r} loads from .env (project {settings.project_id[:8]}…)")
 
-    upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, None)
     try:
-        tools = await list_gateway(settings.gateway_url, upstream.headers)
+        tools = len(await gateway.list_tools(settings))
         report(tools > 0, f"gateway answers with {tools} tools", "add tools to the gateway in the Arcade dashboard")
     except Exception as e:
         hint = "set the gateway's authentication to Arcade Headers, and use this project's own API key" if "40" in str(e) or "auth" in str(e).lower() else str(e)[:200]

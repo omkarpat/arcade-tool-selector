@@ -3,7 +3,7 @@
     "arcade": {
       "type": "stdio",
       "command": "sh",
-      "args": ["-c", "uv run --project \"$CLAUDE_PROJECT_DIR\" ats-proxy"],
+      "args": ["-c", "exec \"$CLAUDE_PROJECT_DIR/.venv/bin/ats-proxy\""],
       "env": {
         "ATS_ROLE": "${ATS_ROLE}"
       }

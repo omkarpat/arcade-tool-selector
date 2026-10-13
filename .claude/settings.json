@@ -10,7 +10,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" ats-hook user-prompt-submit",
+            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/ats-hook\" user-prompt-submit",
             "timeout": 10
           }
         ]
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uv run --project \"$CLAUDE_PROJECT_DIR\" ats-hook pre-tool-use",
+            "command": "\"$CLAUDE_PROJECT_DIR/.venv/bin/ats-hook\" pre-tool-use",
             "timeout": 30,
             "onFailure": "block"
           }

@@ -10,7 +10,7 @@ Arcade controls access per tool and per user. The risk I actually live with is p
 
 The design comes down to one narrow judgment surrounded by boring, predictable code.
 
-**One question for the model, everything else deterministic.** The only thing an LLM decides is whether this call fits the project's purpose and whether the user asked for it. The proxy, the catalog cache, the outcomes for each risk level and the "deny if anything fails" behavior are all plain code. I didn't want an agent loop. This is a gate in front of an agent, and a gate has to be cheap, fast, auditable and predictable when it breaks.
+**One question for the model, everything else deterministic.** The only thing an LLM decides is whether this call fits the project's purpose and whether the user asked for it. The proxy, the outcomes for each risk level and the "deny if anything fails" behavior are all plain code. I didn't want an agent loop. This is a gate in front of an agent, and a gate has to be cheap, fast, auditable and predictable when it breaks.
 
 **The project description is the policy.** Early versions had deny-lists, per-tool overrides, domain rules and a hand-curated list of tools that "send". Every one of them repeated something the description already said, drifted from it over time, and hid cases from the eval, because a rule that fires first means the judge never gets measured. Tool-level access already has a home in Arcade's gateway allow-lists, so I deleted all of them. Blocking didn't get any worse.
 
@@ -54,7 +54,7 @@ The vetter adds those two layers. Actions come from the description: "can create
 - **One home for every setting, and fail loudly.** Purposes and tools live in Arcade, keys live in `.env`, and the policy lives in code. There are no overrides or fallbacks. An early version let a local file override the gateway's purpose, and I couldn't tell which one a decision had used.
 - **Setup is clone, fill in `.env`, `uv sync`, and start Claude Code with a role.** The repo ships as a ready Claude Code project.
 - **Secrets stay out of Claude Code's config,** which would store them in plain text.
-- **The catalog is cached and shared across sessions.** The gateway pages its tool list, and reading only the first page silently dropped a third of the tools.
+- **The harness is small on purpose.** The proxy reads the tools and purpose at startup and every 15 minutes, opens a fresh gateway session per call, and runs only calls its hook vetted. Earlier versions had a shared disk cache, reconnect logic and a second judge call inside the proxy; none of it earned its keep.
 - **The audit log doesn't duplicate Arcade.** It records only what Arcade can't see, mainly the decisions and their reasons, and links back to Arcade's own execution history.
 
 ## What's next

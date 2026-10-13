@@ -14,8 +14,8 @@ def tool(name: str, read_only: bool = False, destructive: bool = False) -> types
     return types.Tool(name=name, description="d", input_schema={"type": "object"}, _meta={"arcade": {"metadata": {"behavior": behavior}}})
 
 
-CATALOG = Catalog.from_tools(
-    [
+CATALOG = Catalog(
+    tools=[
         tool("GoogleCalendar_ListEvents", read_only=True),
         tool("GoogleCalendar_CreateEvent"),
         tool("Gmail_TrashEmail", destructive=True),
