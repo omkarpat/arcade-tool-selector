@@ -1,272 +1,139 @@
-# Plan: arcade-tool-selector
+# Plan
 
-**Status:** phases 1–3 are built: the proxy, the catalog and per-call scope vetting, with evals. Phase 4, prompt-time tool selection, is next. Each phase lands as its own PR. Sections marked *(planned)* aren't built yet.
+Phases 1 to 3 are built: the proxy, the catalog, and per-call scope checks with their evals. Phase 4, prompt-time tool selection, comes next. Anything marked *planned* doesn't exist yet.
 
-## 1. Problem
+## The problem
 
-An Arcade-backed agent is handed a gateway's whole "Allowed Tools" list, and the LLM decides which tool to call. As the catalog grows, this has three costs:
-- tokens on every turn;
-- worse tool choice between near-duplicates (`Gmail_ListEmails` vs `Gmail_SearchThreads`);
-- a wider blast radius for a bad call.
+An agent backed by Arcade gets the gateway's whole list of allowed tools, and the model picks which one to call. As the catalog grows, that costs tokens on every turn, makes it harder to choose between near-duplicate tools, and widens the damage a bad call can do.
 
-It's also a security problem. Tools need broad OAuth scopes to be useful, such as `gmail.modify` to read *and* send. Once a user authorizes, those scopes are live for every call the model makes, including calls induced by prompt injection in a tool's output.
+It's also a security problem. Tools need broad OAuth scopes to be useful, and once a user grants them, they're live for every call the model makes, including calls triggered by injected text in a tool's output.
 
-**The core case: the user's grant is broader than the project needs.** One set of OAuth grants often serves many projects, and each needs only a slice. A meeting scheduler needs Calendar and read-only Gmail, while the user has also authorized Gmail send, Drive sharing and Linear write for other work. Arcade would execute any of those, but each of these must be blocked:
-- Gmail send, Drive sharing and anything in Linear;
-- a calendar invite to an outside domain;
-- a call that injected text in a tool result asks for.
+The core case is a grant that's broader than the project needs. One set of grants often serves many projects. A meeting scheduler needs the calendar and read-only email, while the same user has also granted email sending, file sharing and Linear access for other work. Arcade would run any of those calls. The scheduler should be stopped from sending email, sharing files, touching Linear, inviting outsiders, or doing anything injected text asks for.
 
-**The project's slice is contextual, not a fixed tool list.** A support bot legitimately needs to send email, but only to reply to customers who wrote in. So whether a call is in scope is judged per call, against the project's purpose, the user's request and the call's arguments (§4.3). Blocking out-of-scope calls is the main security property, and it has its own eval (§5).
+What a project may do isn't a fixed tool list. A support bot legitimately sends email, but only replies to customers who wrote in. So scope has to be judged call by call, against the project's purpose, the user's request and the call's arguments.
 
-**Goals:**
-1. **Vet** *(built)*: check every tool call against the project's purpose before it executes. Allow, deny, or ask the user.
-2. **Select** *(planned)*: given the project and the user's prompt, return the small set of tools the LLM may see for that turn. The LLM still picks among them and fills the arguments.
+There are two goals:
 
-Selection narrows what the model can attempt. Vetting decides what actually runs.
+1. **Vet** *(built)*: check every call against the project's purpose before it runs, then allow it, refuse it, or ask the user.
+2. **Select** *(planned)*: for each prompt, show the model only the few tools it's likely to need. The model still chooses among them and fills in the arguments.
 
-**Non-goals:** replacing Arcade auth or execution, a hosted service, generating tool arguments.
+Selection narrows what the model can attempt, and vetting decides what actually runs. Replacing Arcade's auth or execution is out of scope, and so is a hosted service.
 
-## 2. Prior art: jev-search
+## Prior art
 
-[superagents-lab/jev-search](https://github.com/superagents-lab/jev-search) (MIT) picks which of 12 search sources to query for a request. What we take from it:
+[jev-search](https://github.com/superagents-lab/jev-search) picks which of a dozen search sources to query by asking yes/no questions and keeping the answers whose probability clears a threshold. I borrowed that shape. Each tool gets a short card, the judge answers yes/no questions with probabilities, and code proposes the candidates so the model can never invent a tool. What I added on top is a retrieval step, since an Arcade catalog has hundreds of tools rather than twelve, and labelled evals from the start.
 
-| jev-search | Here |
-|---|---|
-| Each source carries a yes/no question | Each tool carries a **tool card**; the vetter asks yes/no questions about each call |
-| The model returns a **probability per question**, never free text | The Decisions API answers typed predicates with probabilities |
-| Keep `p ≥ threshold`, else fall back to defaults | Thresholds per question; selection falls back to project defaults |
-| Code proposes candidates, the model only scores them | The model can't invent a tool name |
+## What Arcade already provides
 
-What we add: a retrieval stage before the gate (an Arcade catalog has hundreds of tools, not 12), and labelled evals from day one.
+- **Gateways** with an allow-list of tools and free-text instructions. The instructions are where each project's purpose lives.
+- **Tool metadata** that marks tools as read-only or destructive and lists their scopes. The risk levels come from this.
+- **Per-project API keys and OAuth grants.** A key from another project is rejected.
+- **Execution history** for every call Arcade runs.
+- **Contextual Access hooks** that run before and after calls. They see the user, the tool and its inputs, but not the request or the purpose, so they can't judge scope. Closing that gap is the feature I propose in [WRITEUP.md](WRITEUP.md).
 
-## 3. What Arcade gives us
+Nothing built in selects tools based on the prompt.
 
-- **MCP gateways:** project-scoped, with a static Allowed Tools list, Arcade Headers or Arcade Auth, and **instructions** ("Guide your agent"). The proxy uses Arcade Headers. The instructions hold the project's purpose.
-- **Tool metadata:** each tool's `_meta.arcade` carries `read_only` / `destructive` flags, operations and OAuth scopes. That's where risk tiers come from.
-- **Project-scoped API keys and OAuth grants:** another project's key gets a 403, and each project is authorized separately.
-- **Tool execution history:** `GET /v1/orgs/{org}/projects/{project}/tool_executions`. There's no API to write custom events, and gateway results carry no execution id.
-- **Contextual Access hooks:** org- or project-level webhooks (access, pre and post) with priority, fail-open/closed and a 5s timeout. A pre-hook sees the user, the tool and its inputs, **never the request or the project's purpose**, so it can't judge scope. Closing that gap is the feature proposed in [WRITEUP.md](WRITEUP.md).
-- **Nothing built-in does prompt-based selection.**
+## Design
 
-## 4. Design
+### Claude Code integration *(built)*
 
-### 4.1 Claude Code integration: proxy + hooks *(built)*
+A local MCP proxy sits in front of the gateway and is the only thing that talks to Arcade. Two Claude Code hooks feed it. When you send a prompt, a hook passes it to the proxy as the evidence future calls are judged against. When the model makes a call, another hook asks the proxy for a verdict. "Deny" refuses the call, and "ask" becomes Claude Code's own permission prompt with the reason attached. "Allow" stays silent, so Claude Code's normal rules still apply. The proxy also re-checks every call itself, so nothing slips past if a hook is skipped.
 
-The gateway sits behind a local stdio MCP proxy. The proxy is the only thing that talks to Arcade.
+The hooks and the proxy find each other through a local socket tied to the Claude Code process. The repo itself is a ready Claude Code project. It registers the proxy, adds the hooks, and turns off claude.ai connectors so the gateway is the only route to your apps.
 
-```
-                   ┌──────────────────────── Claude Code ─────────────────────────┐
- user prompt ─────►│ UserPromptSubmit hook ──(local socket)──┐                     │
-                   │                                         ▼                     │
-                   │ model ◄── tools/list ──────────── proxy (stdio MCP) ──────────┼──► Arcade gateway
-                   │   │                                     ▲  vetter, catalog     │    (Streamable HTTP,
-                   │   └─ tool call ─► PreToolUse hook ──────┘  cache, audit        │     Arcade Headers auth)
-                   └─────────────────────────────────────────────────────────────────┘
-```
+API keys stay in the repo's `.env`, which only the proxy reads. Claude Code's own config would store them in plain text.
 
-**Per turn:**
-1. **`UserPromptSubmit`** sends the prompt to the proxy. That prompt is the evidence calls are judged against. If the proxy can't be reached, or no role is set, the prompt is blocked.
-2. **`PreToolUse`** (matcher `mcp__arcade__.*`) asks the proxy to vet the call. **Deny** and **ask** map to Claude Code's own decisions, so ask becomes Claude Code's permission prompt, with the reason. **Allow** prints nothing, so Claude Code's own permission rules still apply: the vetter only tightens. With `onFailure: block`, a hook failure blocks the call.
-3. **The proxy re-checks every call** before forwarding it, so a call that skips the hook is still vetted.
+There are known limits. Built-in tools like Bash aren't covered. Subagents get their prompts from the parent model, not from you. And anyone who adds a second route to the same apps bypasses the proxy entirely, which is the strongest argument for moving this check into Arcade.
 
-**Session correlation.** MCP `initialize` doesn't carry Claude Code's session id, but the hook and the proxy are children of the same `claude` process. So:
-- the proxy listens on `/tmp/ats-<uid>/<claude-pid>-<data-dir-hash>.sock`, a short path because AF_UNIX paths cap at ~104 bytes;
-- the hook walks up its process tree to that pid.
+### Configuration *(built)*
 
-**The repo is the Claude Code project.** `.mcp.json` registers the proxy as `arcade`, for the role in `ATS_ROLE`. `.claude/settings.json`:
-- adds the hooks;
-- turns off claude.ai connectors, so the gateway is the only route to the user's apps;
-- starts in the default permission mode.
+Every setting has exactly one home, and anything missing fails loudly:
 
-Setup is clone, `.env`, `uv sync`, then `ATS_ROLE=<role> claude`. To put another project's existing gateway behind the proxy, use [`examples/claude-code/`](examples/claude-code/).
+- **Arcade** holds each role's purpose (in the gateway's instructions), its tools and its grants.
+- **`.env`** holds the user, the org, the OpenAI key and the list of roles. The role to run as is chosen at launch.
+- **Code** holds the policy itself: thresholds and what each risk level does. These values were set from the evals.
+- **Eval datasets** carry their own sample projects. They're the only local config.
 
-**Upstream auth.** The proxy sends `Authorization: Bearer <role api_key>` plus `Arcade-User-ID`. Keys come from the repo's `.env` (gitignored, mode 600), read only by the proxy. Claude Code's config would store them in plain text in `~/.claude.json`, so it only ever sets `ATS_ROLE`. Per-tool OAuth still happens through Arcade: the authorization URL comes back in the tool result.
+### Vetting a call *(built)*
 
-**Limits:**
-- The hooks govern this server only. Claude Code's built-in tools keep their usual permission prompts.
-- Subagents get their prompts from the parent model, not through `UserPromptSubmit`.
-- The vetter guards its own gateway. A user who adds another route to the same apps (a separate MCP server) bypasses it. That's why the check belongs inside Arcade.
+Each call gets one Decisions API request with up to four yes/no questions:
 
-### 4.2 Configuration *(built)*
+- Is this within the project's purpose, given its arguments?
+- Did the user ask for it? Writes must be asked for directly. Reads only need to be a sensible step toward the request.
+- For writes: does it reach other people, such as an email, message, invite or share?
+- For writes: does it reveal internal details to someone outside the organization?
 
-Every setting has one home, with no overrides and no fallbacks. Anything missing fails loudly.
-- **Arcade platform:** each role is an Arcade project. Its gateway's instructions are the purpose, and its allow-list, API key and OAuth grants bound what it can reach.
-- **`.env`:**
-  - `ARCADE_USER_ID`, whose domain is the organization;
-  - `ARCADE_ORG_ID`;
-  - `OPENAI_API_KEY`;
-  - `ATS_ROLES`, one `{project_id, api_key, gateway_url}` per role.
+The judge sees the purpose, the user's own messages, today's date and the call. Tool outputs are never evidence, which is what stops injected text from raising a score.
 
-  `ATS_ROLE`, set at launch, picks the role.
-- **Code:** the policy itself, set from the scope eval:
-  - scope threshold 0.65;
-  - disclosure threshold 0.5;
-  - destructive calls ask;
-  - out-of-scope send and destructive calls are denied.
-- **Eval datasets** carry their own project definitions. They're the only local configuration.
+Risk sets the consequence. An out-of-scope read or write asks the user, and an out-of-scope send or destructive call is refused. Anything in scope but not clearly requested also asks. Destructive calls always ask. If the judge is down or the gateway has no purpose, every call is refused.
 
-### 4.3 Call vetting *(built)*
+The audit log records the decisions and reasons, plus a key that links each executed call to Arcade's own history, rather than duplicating it.
 
-```
-model emits call ──► Vetter ──► allow ───────────────► gateway
-                       │   ├──► deny (reason back to the model)
-                       │   └──► ask ──► Claude Code's permission prompt
-                       ▼
-                   audit log
-```
+### Catalog cache *(built)*
 
-**The description is the policy.** There are no tool lists or argument rules in the vetter. Tool-level access is Arcade's job: gateway allow-lists and project-scoped keys.
+The proxy keeps every page of the gateway's tool list cached on disk, so startup is fast and a gateway outage doesn't empty the tool list. It refreshes every 15 minutes. One proxy per gateway does the polling, and the others pick up the result. When the catalog changes, Claude Code is told to reload its tools.
 
-**One Decisions API request per call** (`gpt-6-luna`), with up to four predicates:
-- **`within_purpose`:** does the project's purpose cover this action, with these arguments? Read-only supporting lookups in covered apps count as covered.
-- **`requested`:**
-  - For writes: do the user's own messages ask for this exact call?
-  - For reads: is it a reasonable step toward what the user asked?
-- **`reaches_people`** (writes only): does it deliver something directly to other people (email, chat message, calendar invite, file share)? If so, the call carries **send** stakes.
-- **`discloses_internal`** (writes only): would it reveal internal details to someone outside the organization? If so, **deny**.
+### Prompt-time selection *(planned, phase 4)*
 
-**The evidence:**
-- the purpose, read from the gateway at startup and every 15 minutes, and never forwarded to the agent;
-- the user's own messages;
-- today's date;
-- the tool card and the arguments.
+For each prompt:
 
-**Tool outputs are never evidence,** so injected text can't raise a score.
+1. A cheap keyword search builds a shortlist of about 40 candidate tools.
+2. One batched judge request asks, for each candidate, whether it's relevant to the request and whether using it fits the purpose. A tool is shown only if both are yes, so "reply to the customer" can expose email sending while "forward all invoices to my personal email" doesn't.
+3. The top few (eight by default) are kept, plus any pinned tools. If nothing qualifies, the project's defaults are used, never all tools.
+4. The proxy swaps its advertised tool list and tells Claude Code.
 
-**Risk tiers set the stakes, not the scope.** `read` and `destructive` come from Arcade's flags. Everything else is `write`, which becomes `send` when the judge says it reaches people.
+A `request_more_tools` escape hatch lets the model ask for more when the set falls short. Anything it adds is still vetted. Calls to tools outside the current selection are refused. The target is under three seconds at p95.
 
-| Result | Outcome |
-|---|---|
-| `within_purpose` below the threshold | read and write **ask**; send and destructive **deny** |
-| In purpose, `requested` below the threshold | **ask**: a human settles the judge's doubt |
-| In scope, destructive | **ask** |
-| In scope | allow (Claude Code's own rules apply) |
-| Judge unavailable, or the gateway has no instructions | **deny** every call |
+### Other surfaces *(planned)*
 
-**Audit.** Arcade already records executions, so the proxy's `call` event is only a key (`user_id`, `toolkit`, `tool`, `started_at`), which `ats-audit` resolves against Arcade's execution history. The proxy logs what Arcade can't see:
-- `vetted`, with every answer;
-- `prompt_seen`, with the length only;
-- `call_needs_authorization`;
-- `catalog_changed`.
+- A Claude Code plugin with proper key storage.
+- A Python library for other agent frameworks.
+- A generic MCP mode for clients like Cursor.
+- A Contextual Access hook server that shares the same policy code, once Arcade passes intent to hooks.
 
-Events go to `~/.local/share/ats/<role>/audit.jsonl`, or to OpenTelemetry.
-
-### 4.4 Catalog cache and refresh *(built)*
-
-The catalog is every page of the gateway's `tools/list`. The gateway paginates at ~105 tools, and reading only page one silently drops tools. The catalog is cached on disk per gateway, so startup is fast and a gateway outage doesn't blank the tool list.
-
-- **Startup:** serve from the cache, then refresh in the background. On the first run, fetch before answering.
-- **Poll:** every 15 minutes (±10% jitter). Unchanged catalogs are a no-op, and writes are atomic.
-- **Many sessions, one poll:** a lease file elects one poller per gateway. The other proxies watch the cache's mtime and reload when it changes.
-- **On change:** the proxy diffs added, removed and changed tools, emits `notifications/tools/list_changed` to Claude Code, and audits `catalog_changed`.
-- **Other triggers:**
-  - an upstream `list_changed`;
-  - a call to an unknown tool, which forces a refresh before the call is denied.
-
-### 4.5 Prompt-time selection *(planned, phase 4)*
-
-```
-gateway catalog ──► tool cards ──► Shortlist ──► Gate ──► Selection ──► proxy tools/list + list_changed
-                                   (per prompt,  (per prompt,  names + scores
-                                    no LLM)       Decisions API)
-```
-
-1. **Shortlist** (no LLM): BM25 over names, descriptions and parameters, later fused with embeddings. Take the top 40, or the whole pool if it's smaller.
-2. **Gate:** one batched Decisions API request asking two predicates per shortlisted tool:
-   - *relevant:* would this request need the tool?
-   - *in scope:* is using it for this request within the purpose?
-
-   A tool is exposed only when both pass. One prompt can make `Gmail_SendEmail` visible ("reply to the customer") while another doesn't ("forward all invoices to my personal email").
-3. **Select:** keep `p ≥ 0.6`, sorted by score and capped at `k` (default 8). Pins always go in. If nothing passes, use the project defaults, never "all tools".
-4. **Hand-off:** the proxy swaps its advertised `tools/list` to the selection and sends `list_changed`. The `UserPromptSubmit` hook's `additionalContext` names the available tools.
-5. **Multi-turn:** tools from recent turns get a sticky bonus. An always-listed `request_more_tools(need)` re-runs selection when the set falls short; whatever it adds is still vetted.
-
-Selection adds an in-selection check to vetting. A call to a tool outside the current selection is denied, even if injected text asks for it. The latency budget is p95 < 3s, inside the hook's timeout.
-
-### 4.6 Integration surfaces
-
-| Surface | Status |
-|---|---|
-| Claude Code: proxy + hooks | built |
-| Claude Code plugin: marketplace install, secure key storage, `/ats-why` | planned (phase 6) |
-| Python library: `select()`, `vet()`, framework adapters | planned |
-| Generic MCP server for other clients (Cursor, Claude Desktop): meta-tool mode where `list_changed` isn't honored | planned |
-| Contextual Access pre/post-hook server sharing `policy.py` | planned; needs the request and the purpose to reach hooks |
-
-## 5. Evaluation
+## Evaluation
 
 **Built:**
-- **Scope** (`evals/scope.py`, 65 cases, 5 projects on one broad gateway). Each case is a project, the user's messages and a proposed call, labelled allow / ask / deny. The cases cover:
-  - the same tool in and out of scope;
-  - out-of-purpose toolkits;
-  - broad permissions used narrowly;
-  - rules stated only in the description;
-  - injection;
-  - supporting lookups;
-  - role limits;
-  - internal-detail disclosure.
 
-  The headline is the out-of-scope block rate, which must be 100%. Friction (in-scope calls held) is the second metric. A threshold sweep sets the threshold. Today, at 0.65: 100% blocked, 7% held, 95% exact.
-- **Selection baselines** (`evals/run.py`, 103 labelled prompts): recall, solved, precision, set size and schema tokens for "all tools" and BM25. Phase 4's gate has to beat these.
-- **Live tests** (`ATS_LIVE=1`): the real gateway, judge, hook and proxy re-check, end to end.
+- **Scope eval.** 65 cases across five sample projects on one broad gateway, each labelled allow, ask or deny. The bar is 100% of out-of-scope calls blocked, with friction as the second number. At the current threshold (0.65), it blocks 100%, holds 7% of legitimate calls, and matches exactly on 95%.
+- **Selection baselines.** 103 labelled prompts, measuring how well "send everything" and keyword search do. Phase 4 has to beat these.
+- **Live tests** that run the real gateway, judge, hooks and proxy end to end.
 
 **Planned:**
-- labelling real decisions from the audit log;
-- per-project threshold calibration;
-- recorded judge responses, so CI is deterministic and free;
-- a multi-turn and injection slice for selection;
-- an **unused-grants report**: OAuth scopes a project never used over a window of the audit log, so teams can narrow their Arcade auth.
 
-## 6. Repo layout
+- Labelling real decisions from the audit log.
+- Per-project thresholds.
+- Recorded judge responses so CI is free and deterministic.
+- A report of OAuth scopes a project never uses, so teams can narrow their grants.
 
-```
-arcade-tool-selector/
-├─ .mcp.json, .claude/      # the repo as a Claude Code project (proxy server, hooks)
-├─ src/arcade_tool_selector/
-│  ├─ settings.py           # .env and roles
-│  ├─ platform.py           # the purpose, from the gateway's instructions
-│  ├─ catalog.py            # shared catalog cache, lease, diff
-│  ├─ cards.py              # tool cards and risk tiers from _meta.arcade
-│  ├─ judge.py              # OpenAI Decisions API
-│  ├─ policy.py             # the vetter
-│  ├─ audit.py, executions.py
-│  ├─ retrieve.py           # BM25 baseline (selection)
-│  ├─ proxy/                # stdio MCP server, gateway client, hook socket, re-check
-│  ├─ claude_code/          # hook entrypoints
-│  └─ demo.py, doctor.py
-├─ evals/                   # scope + selection evals, datasets
-├─ examples/                # role purposes, configs for other projects
-└─ tests/
-```
+## Phases
 
-Python 3.11+, `uv`, MIT. The only abstraction is the judge interface, and each vendor's official SDK sits behind it.
-
-## 7. Phases
-
-| # | Deliverable | Status |
+| # | What | Status |
 |---|---|---|
-| 1 | Pass-through proxy, catalog cache (poll, shared lease, diff), hook ↔ proxy socket, audit | done |
-| 2 | Tool cards, risk tiers, selection eval with "all tools" and BM25 baselines | done |
-| 3 | Per-call scope vetting with the Decisions API, at the hook and in the proxy, plus the scope eval | done: 100% blocked |
-| 4 | Selector: batched gate, select rules, `list_changed`, in-selection check | next. Done when it beats BM25 on recall at equal set size, p95 < 3s |
-| 5 | `request_more_tools`, sticky selections, unused-grants report | |
-| 6 | Claude Code plugin packaging | |
-| 7 | Hybrid shortlist (embeddings + RRF) | shortlist recall@40 ≥ 98% |
-| 8 | Python library and adapters; generic MCP mode for other clients | |
-| 9 | Contextual Access hook server sharing `policy.py` | |
+| 1 | Pass-through proxy, catalog cache, hook-to-proxy link, audit | done |
+| 2 | Tool cards, risk levels, selection baselines | done |
+| 3 | Per-call scope vetting and the scope eval | done |
+| 4 | Prompt-time selection | next: must beat keyword search at the same set size |
+| 5 | `request_more_tools`, sticky selections, unused-scopes report | |
+| 6 | Claude Code plugin | |
+| 7 | Better shortlist (keywords plus embeddings) | |
+| 8 | Python library and other MCP clients | |
+| 9 | Contextual Access hook server | |
 
-## 8. Decisions and open questions
+## Decisions and open questions
 
 **Decided:**
-- The first consumer is Claude Code, via the proxy and hooks.
-- The project boundary is the project's purpose, not the gateway. The gateway and its grants bound the user; each project narrows that.
-- Scope is contextual and judged by the Decisions API. There are no tool lists or argument rules in the vetter.
-- The purpose lives only in the gateway's instructions, and the agent never sees it.
-- One judge, the Decisions API, with no fallback model. Judge failure denies every call.
-- Out-of-scope calls must be blocked 100% of the time. Thresholds come from the eval and from real sessions.
+
+- Claude Code comes first.
+- A project's boundary is its purpose, not its gateway.
+- Scope is judged per call, with no tool lists in the vetter.
+- The purpose lives only in Arcade, and the agent never sees it.
+- There's one judge and no fallback model. If it fails, everything is refused.
+- Out-of-scope calls must be blocked 100% of the time.
 
 **Open:**
-1. **Granularity:** select individual tools, or whole toolkits when most of one passes?
-2. **Upstream auth:** is a mode-600 `.env` acceptable until the plugin moves keys to secure storage, or should the proxy run the gateway's OAuth flow so no long-lived key sits on disk?
-3. **A local judge:** a small model distilled from Decisions API answers and the audit log, gated on the scope eval, would remove the per-call network hop and allow air-gapped use. When is it worth it?
-4. **Name:** is `arcade-tool-selector` still right now that the project mainly vets?
+
+1. Should selection pick individual tools, or whole toolkits when most of one qualifies?
+2. Is a locked-down `.env` good enough until the plugin moves keys to secure storage?
+3. When is a small local judge, trained on Decisions API answers, worth building?
+4. Is "tool selector" still the right name, now that the project mostly vets?
