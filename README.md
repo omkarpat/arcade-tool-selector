@@ -85,7 +85,7 @@ There are two layers at work here. Arcade's allow-list removes tools the role do
 
 You need Claude Code v2.1.295 or later. This repo is already set up as a Claude Code project: [`.mcp.json`](.mcp.json) registers the proxy, and [`.claude/settings.json`](.claude/settings.json) adds the hooks. The settings also turn off claude.ai connectors, so the gateway is the only path to your apps.
 
-Start it with `ATS_ROLE=<role> claude`. The first time, trust the folder and approve the `arcade` server. To switch roles, restart with a different `ATS_ROLE`. If you start without one, every prompt is blocked until you do.
+Start it with `ATS_ROLE=<role> claude`. The first time, trust the folder and approve the `arcade` server. To switch roles, restart with a different `ATS_ROLE`. Without one, the hooks are skipped and the `arcade` server fails to start.
 
 After that, work as usual. Out-of-scope calls come back refused with a reason, and destructive or borderline calls show the normal permission prompt. The proxy only ever tightens Claude Code's own rules; it never loosens them. The proxy runs only calls its hook vetted, and if the proxy is unreachable, prompts and calls are blocked. Claude Code's built-in tools (Bash, WebFetch and so on) aren't covered and keep their usual prompts.
 
