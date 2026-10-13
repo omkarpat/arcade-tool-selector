@@ -1,4 +1,4 @@
-"""Tool cards: what the selector and vetter know about each gateway tool.
+"""Tool cards: what the vetter knows about each gateway tool.
 
 Built from the gateway's tools/list alone: Arcade attaches its own metadata under `_meta.arcade`
 (operations, read_only/destructive flags, service domain, OAuth requirements).
@@ -6,7 +6,6 @@ Built from the gateway's tools/list alone: Arcade attaches its own metadata unde
 Tiers: read, write and destructive come from Arcade's metadata; send is judged per call (policy.py).
 """
 
-import re
 from typing import Literal
 
 from mcp import types
@@ -26,7 +25,7 @@ class Param(BaseModel):
 
 
 class ToolCard(BaseModel):
-    """What the selector and vetter know about one gateway tool.
+    """What the vetter knows about one gateway tool.
 
     name: the gateway name, e.g. Gmail_SendEmail.
     qualified_name: the Arcade name, e.g. Gmail.SendEmail.
@@ -44,15 +43,6 @@ class ToolCard(BaseModel):
     scopes: list[str]
     tier: Tier | None
 
-    def text(self) -> str:
-        """Searchable text: name words, description, parameter names and descriptions."""
-        params = " ".join(f"{p.name} {p.description}" for p in self.params)
-        return f"{split_words(self.qualified_name)} {self.description} {split_words(params)}"
-
-
-def split_words(text: str) -> str:
-    """`Gmail.ListEmails send_notifications` → `Gmail List Emails send notifications`."""
-    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])|[._]", " ", text)
 
 
 def card_for(tool: types.Tool) -> ToolCard:

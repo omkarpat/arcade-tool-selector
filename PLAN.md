@@ -75,7 +75,7 @@ The proxy reads every page of the gateway's tool list, and the purpose, at start
 
 ### Prompt-time selection *(planned, phase 4)*
 
-For each prompt:
+It starts with a selection eval: prompts labelled with the tools they need, scored for recall and tokens per turn, with "send every tool" and plain keyword search (BM25) as the baselines to beat. Then, for each prompt:
 
 1. A cheap keyword search builds a shortlist of about 40 candidate tools.
 2. One batched judge request asks, for each candidate, whether it's relevant to the request and whether using it fits the purpose. A tool is shown only if both are yes, so "reply to the customer" can expose email sending while "forward all invoices to my personal email" doesn't.
@@ -96,7 +96,6 @@ A `request_more_tools` escape hatch lets the model ask for more when the set fal
 **Built:**
 
 - **Scope eval.** 65 cases across five sample projects on one broad gateway, each labelled allow, ask or deny. The bar is 100% of out-of-scope calls blocked, with friction as the second number. At the current threshold (0.65), it blocks 100%, holds 7% of legitimate calls, and matches exactly on 95%.
-- **Selection baselines.** 103 labelled prompts, measuring how well "send everything" and keyword search do. Phase 4 has to beat these.
 - **Live tests** that run the real gateway, judge, hooks and proxy end to end.
 
 **Planned:**
@@ -111,9 +110,9 @@ A `request_more_tools` escape hatch lets the model ask for more when the set fal
 | # | What | Status |
 |---|---|---|
 | 1 | Pass-through proxy, hook-to-proxy link, audit | done |
-| 2 | Tool cards, risk levels, selection baselines | done |
+| 2 | Tool cards and risk levels | done |
 | 3 | Per-call scope vetting and the scope eval | done |
-| 4 | Prompt-time selection | next: must beat keyword search at the same set size |
+| 4 | Selection eval with baselines, then prompt-time selection | next: must beat keyword search at the same set size |
 | 5 | `request_more_tools`, sticky selections, unused-scopes report | |
 | 6 | Claude Code plugin | |
 | 7 | Better shortlist (keywords plus embeddings) | |

@@ -1,7 +1,5 @@
-"""Tool cards, BM25 and the selection eval, against the local catalog snapshot (skipped without one)."""
+"""Tool cards, against the local catalog snapshot (skipped without one)."""
 
-import subprocess
-import sys
 from collections import Counter
 from pathlib import Path
 
@@ -9,7 +7,6 @@ import pytest
 
 from arcade_tool_selector.cards import build_cards
 from arcade_tool_selector.catalog import Catalog
-from arcade_tool_selector.retrieve import BM25Index
 
 EVALS = Path(__file__).parents[1] / "evals"
 SNAPSHOT = EVALS / "catalogs" / "workspace.json"
@@ -31,16 +28,3 @@ def test_tiers_from_arcade_metadata():
     assert (send.qualified_name, send.toolkit, send.auth_provider) == ("Gmail.SendEmail", "Gmail", "google")
     assert "https://www.googleapis.com/auth/gmail.send" in send.scopes
     assert {"recipient", "subject", "body"} <= {p.name for p in send.params}
-
-
-def test_bm25_finds_by_split_words():
-    """CamelCase tool names are split into words, so plain-language queries match them."""
-    index = BM25Index(build_cards(CATALOG))
-    assert "GoogleCalendar_FindTimeSlotsWhenEveryoneIsFree" in index.top("when is everyone free", 5)
-
-
-def test_eval_dataset_runs_against_snapshot():
-    """The selection eval runs end to end on the snapshot."""
-    result = subprocess.run([sys.executable, str(EVALS / "run.py")], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert "bm25@40" in result.stdout

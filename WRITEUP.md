@@ -59,7 +59,7 @@ The vetter adds those two layers. Actions come from the description: "can create
 
 ## What's next
 
-The biggest piece left is prompt-time tool selection, so the model only sees the tools relevant to each request. Sending all 166 tools costs around 167k tokens per turn, and simple keyword search finds only 60% of the needed tools when it's limited to eight. Beyond that, a production version would need a larger eval drawn from real logs, per-project thresholds, a latency budget, a local judge option and a clear retention policy for prompts. The roadmap is in [PLAN.md](PLAN.md).
+The biggest piece left is prompt-time tool selection, so the model only sees the tools relevant to each request. Sending all 166 tools costs around 167k tokens per turn. Beyond that, a production version would need a larger eval drawn from real logs, per-project thresholds, a latency budget, a local judge option and a clear retention policy for prompts. The roadmap is in [PLAN.md](PLAN.md).
 
 ## What Arcade should add next: purpose-aware Contextual Access
 
