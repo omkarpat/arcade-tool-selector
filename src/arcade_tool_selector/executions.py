@@ -43,10 +43,10 @@ class ExecutionsPage(ArcadeModel):
 
 def find_execution(key: ExecutionKey) -> Execution | None:
     """The Arcade execution closest to `key.started_at`. Needs ARCADE_ORG_ID, and the active role's project
-    (or ARCADE_PROJECT_ID without one)."""
+    (or DEFAULT_ARCADE_PROJECT_ID without one)."""
     role = active_role()
-    project_id = role.project_id if role else os.environ["ARCADE_PROJECT_ID"]
-    client = Arcade(api_key=role.api_key if role else os.environ["ARCADE_API_KEY"])
+    project_id = role.project_id if role else os.environ["DEFAULT_ARCADE_PROJECT_ID"]
+    client = Arcade(api_key=role.api_key if role else os.environ["DEFAULT_ARCADE_API_KEY"])
     page = client.get(
         f"/v1/orgs/{os.environ['ARCADE_ORG_ID']}/projects/{project_id}/tool_executions",
         cast_to=ExecutionsPage,

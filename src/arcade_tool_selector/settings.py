@@ -20,7 +20,7 @@ _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 def load_env() -> None:
     """Load the repo .env, then ATS_ENV_FILE (e.g. a role's file) on top; real environment variables win.
 
-    Read as one file, so a role file can reference repo .env values: ARCADE_API_KEY=${SUPPORT_BOT_ARCADE_API_KEY}.
+    Read as one file, so the overlay can reference repo .env values with ${NAME}.
     """
     files = [REPO_ROOT / ".env"]
     if "ATS_ENV_FILE" in os.environ:
@@ -102,7 +102,7 @@ def load_settings() -> Settings:
     if role := active_role():
         gateway_url, api_key, config = role.gateway_url, role.api_key, role.config
     else:
-        gateway_url, api_key, config = os.environ["ATS_GATEWAY_URL"], os.environ["ARCADE_API_KEY"], os.environ.get("ATS_CONFIG", "ats.yaml")
+        gateway_url, api_key, config = os.environ["ATS_GATEWAY_URL"], os.environ["DEFAULT_ARCADE_API_KEY"], os.environ.get("ATS_CONFIG", "ats.yaml")
     config_path = Path(config).expanduser()
     if not config_path.is_absolute():
         config_path = REPO_ROOT / config_path
