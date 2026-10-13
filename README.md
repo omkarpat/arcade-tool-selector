@@ -42,11 +42,11 @@ cp examples/claude-code/ats.yaml ats.yaml     # the project config; edit project
 
 | `.env` | Where it comes from |
 |---|---|
-| `ARCADE_API_KEY` | Arcade dashboard → **API Keys** (`arc_…`) |
+| `DEFAULT_ARCADE_API_KEY` | Arcade dashboard → **API Keys** (`arc_…`) |
 | `ARCADE_USER_ID` | The email you use with Arcade. Tool authorizations (your Google, Linear… OAuth grants) are keyed to it. |
 | `ATS_GATEWAY_URL` | Your gateway's URL, `https://api.arcade.dev/mcp/<slug>` |
 | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). It needs Decisions API access. |
-| `ARCADE_ORG_ID`, `ARCADE_PROJECT_ID` | Optional. Used by `ats-audit` to link calls to Arcade's execution log. Both appear in the dashboard URL. |
+| `ARCADE_ORG_ID`, `DEFAULT_ARCADE_PROJECT_ID` | Optional. Used by `ats-audit` to link calls to Arcade's execution log. Both appear in the dashboard URL. |
 
 **3. Check the setup, then run the demo:**
 
@@ -139,18 +139,23 @@ Treat each Arcade project as a role, with permissions at three levels:
 | **Support Bot** | Gmail read and reply, Linear tickets, Slack | description: SUP team only, `#support` only, never trashes email. `protect_internal` adds the disclosure question to every call that reaches people: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. |
 
 **To run a role:**
-1. **Put the role's key in the repo `.env`,** next to the others, e.g. `SUPPORT_BOT_ARCADE_API_KEY=arc_…`. Each Arcade project has its own key.
-2. **Give the role a small env file** with only its own settings. It's loaded on top of the repo `.env`, so it can reference those values:
+1. **Describe it** in a project config, e.g. a copy of `examples/roles/support-bot.yaml` with your org's domains.
+2. **Add it to `ATS_ROLES`** in the repo `.env`. It's one dict, keyed by role, holding that Arcade project's ID, its own API key, its gateway URL and the config path:
 
    ```sh
-   # ~/.config/ats/support-bot.env
-   ARCADE_API_KEY=${SUPPORT_BOT_ARCADE_API_KEY}
-   ATS_GATEWAY_URL=https://api.arcade.dev/mcp/<support-bot gateway>
-   ATS_CONFIG=/path/to/support-bot.yaml          # e.g. a copy of examples/roles/support-bot.yaml
-   ATS_DATA_DIR=~/.local/share/ats/support-bot   # its own cache and audit log
+   ATS_ROLES='{
+     "support-bot": {
+       "project_id": "<project id>",
+       "api_key": "arc_…",
+       "gateway_url": "https://api.arcade.dev/mcp/<gateway>",
+       "config": "examples/roles/support-bot.yaml"
+     }
+   }'
    ```
-3. **Run the proxy with `ATS_ENV_FILE` pointing at that file:** `ATS_ENV_FILE=~/.config/ats/support-bot.env uv run ats-proxy`.
-4. **In Claude Code, register it as that role's MCP server.** Give the server, and the role's hooks, the same `ATS_ENV_FILE`: the hooks find their proxy through the role's data directory.
+3. **Select it with `ATS_ROLE`:** `ATS_ROLE=support-bot uv run ats-proxy`. The role gets its own data directory (`~/.local/share/ats/support-bot`), so its cache, audit log and hook socket stay separate. `ats-audit` with the same `ATS_ROLE` reads that project's execution log.
+4. **In Claude Code,** give the role's MCP server and its hooks the same `ATS_ROLE`. A directory per role makes switching roles a `cd`.
+
+Without `ATS_ROLE`, the top-level `DEFAULT_ARCADE_API_KEY`, `ATS_GATEWAY_URL` and `ATS_CONFIG` apply.
 
 ## Evals
 
