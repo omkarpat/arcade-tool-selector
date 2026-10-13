@@ -3,7 +3,7 @@
 # Everything else is the description, judged per call.
 project: meeting-scheduler
 server_name: meeting-scheduler
-project_prompt: >
+project_prompt: >                         # optional: overrides the gateway's instructions (Arcade dashboard)
   Meeting scheduler. Reads the user's calendar, finds free time, and creates, moves or cancels events. Reads
   email to find scheduling requests and replies only to emails about meetings. It only invites people inside
   the organization. It does not send other email, share files, or use any other app.

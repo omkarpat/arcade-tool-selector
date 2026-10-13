@@ -4,7 +4,7 @@
 # the purpose is denied too (on_low_scope.write). No tool lists to maintain.
 project: workspace-search
 server_name: workspace-search
-project_prompt: >
+project_prompt: >                         # optional: overrides the gateway's instructions (Arcade dashboard)
   Personal work search assistant. Searches and reads email, calendar, Drive, Docs, Sheets, Slides, Linear and
   Slack to answer the user's questions. It can create and update Linear issues and comment on them. It never
   deletes or archives anything, and doesn't create or change anything outside Linear issues.

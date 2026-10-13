@@ -97,11 +97,13 @@ class Proxy:
         config = self.settings.config
         return Vetter(config.scope, config.policy, build_cards(self.catalog), self.judge)
 
-    def _evidence(self, session_id: str | None) -> Evidence:
-        return Evidence(project_prompt=self.settings.config.project_prompt, user_messages=self.prompts.get(session_id, []))
+    async def _evidence(self, session_id: str | None) -> Evidence:
+        # The purpose lives in the gateway's instructions (Arcade dashboard); the agent never sees it, only the vetter.
+        purpose = self.settings.config.project_prompt or await self.upstream.gateway_purpose()
+        return Evidence(project_prompt=purpose, user_messages=self.prompts.get(session_id, []))
 
     async def vet(self, tool: str, arguments: dict, session_id: str | None, via: str) -> Decision:
-        decision = await self.vetter.vet(tool, arguments, self._evidence(session_id))
+        decision = await self.vetter.vet(tool, arguments, await self._evidence(session_id))
         self.audit.write("vetted", via=via, tool=tool, arg_keys=sorted(arguments), **decision.model_dump())
         return decision
 

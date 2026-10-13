@@ -51,7 +51,7 @@ async def check() -> None:
         report(False, f"environment: {e.args[0]} is not set", f"copy .env.example to .env and fill it in ({env_file})")
         return
     except FileNotFoundError as e:
-        report(False, f"project config not found: {e.filename}", "cp examples/claude-code/ats.yaml ats.yaml, then edit project_prompt")
+        report(False, f"project config not found: {e.filename}", "cp examples/claude-code/ats.yaml ats.yaml")
         return
     except Exception as e:
         report(False, f"project config invalid: {e}", "compare your ats.yaml with examples/claude-code/ats.yaml")

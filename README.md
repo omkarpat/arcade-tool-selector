@@ -103,9 +103,11 @@ Claude Code v2.1.295 or later is required.
 
 ## How a call is decided
 
-The project description is the policy. Which tools a project can reach at all is Arcade's job: its gateway's allow-list and project-scoped API keys. Each call is judged by one Decisions API request with up to four questions:
+The project description is the policy, and it lives in Arcade: write it into the gateway's **instructions** in the dashboard. The proxy reads it when it connects. Only the vetter sees it; the agent deliberately doesn't, so the vetter is what keeps calls in scope, not the agent's own restraint. `project_prompt` in `ats.yaml` overrides it, which is useful for tests, demos, or several purposes on one gateway.
+
+Which tools a project can reach at all is Arcade's job: its gateway's allow-list and project-scoped API keys. Each call is judged by one Decisions API request with up to four questions:
 - **`within_purpose`:** does the project's purpose cover this action, with these arguments?
-- **`requested`:** do your own messages ask for this exact call? Text the agent read from emails, documents or other tool results never counts. That's the prompt-injection defense.
+- **`requested`:** for writes, do your own messages ask for this exact call? For reads, is it a reasonable step toward what you asked: finding a channel, fetching page 2, looking up an issue? Text the agent read from emails, documents or other tool results never counts. That's the prompt-injection defense.
 - **`reaches_people`** (writes only): does it deliver something directly to other people, such as an email, chat message, calendar invite or file share? If so, the call carries **send** stakes.
 - **`discloses_internal`** (calls that reach people, in `protect_internal` projects): would it reveal internal details to someone outside `org_domains`? If so, **deny**.
 
@@ -163,7 +165,7 @@ Both evals run against a local snapshot of your gateway's catalog (gitignored). 
 
 ```sh
 uv run python evals/snapshot.py               # every tools/list page from your gateway → evals/catalogs/workspace.json
-uv run python evals/scope.py                  # scope decisions, live judge (58 cases, ~15s)
+uv run python evals/scope.py                  # scope decisions, live judge (65 cases, ~15s)
 uv run python evals/run.py                    # tool-selection baselines (offline)
 ```
 
@@ -179,7 +181,7 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 19% (5 cases: 3 held as ask, 2 denied) | 90% | p50 0.27s · p95 0.33s |
+| **100%** | 17% (mostly held as ask) | 91% | p50 0.3s · p95 0.5s |
 
 These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
 

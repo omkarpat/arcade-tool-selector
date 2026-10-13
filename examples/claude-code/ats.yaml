@@ -3,7 +3,7 @@
 project: workspace-search
 server_name: workspace-search            # must match the MCP server name in Claude Code
 
-project_prompt: >
+project_prompt: >                         # optional: overrides the gateway's instructions (Arcade dashboard)
   Personal work assistant. Reads email, calendar, Drive files, Linear issues and Slack. Files and updates
   Linear issues for my teams. Never deletes or archives anything, and never sends anything outside the
   company.

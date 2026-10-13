@@ -78,7 +78,7 @@ class ProjectConfig(BaseModel):
 
     project: str
     server_name: str
-    project_prompt: str
+    project_prompt: str | None = None  # overrides the gateway's instructions (tests, demos, several purposes on one gateway)
     catalog: CatalogConfig = CatalogConfig()
     scope: ScopeConfig = ScopeConfig()
     policy: PolicyConfig = PolicyConfig()
