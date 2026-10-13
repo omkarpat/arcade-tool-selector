@@ -139,13 +139,18 @@ Treat each Arcade project as a role, with permissions at three levels:
 | **Support Bot** | Gmail read and reply, Linear tickets, Slack | description: SUP team only, `#support` only, never trashes email. `protect_internal` adds the disclosure question to every call that reaches people: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. |
 
 **To run a role:**
-1. Give it its own `.env`: that project's API key, plus its gateway URL.
-2. Point the proxy at that env file and the role's config:
+1. **Put the role's key in the repo `.env`,** next to the others, e.g. `SUPPORT_BOT_ARCADE_API_KEY=arc_…`. Each Arcade project has its own key.
+2. **Give the role a small env file** with only its own settings. It's loaded on top of the repo `.env`, so it can reference those values:
 
    ```sh
-   ATS_ENV_FILE=.env.support-bot ATS_CONFIG=examples/roles/support-bot.yaml uv run ats-proxy
+   # ~/.config/ats/support-bot.env
+   ARCADE_API_KEY=${SUPPORT_BOT_ARCADE_API_KEY}
+   ATS_GATEWAY_URL=https://api.arcade.dev/mcp/<support-bot gateway>
+   ATS_CONFIG=/path/to/support-bot.yaml          # e.g. a copy of examples/roles/support-bot.yaml
+   ATS_DATA_DIR=~/.local/share/ats/support-bot   # its own cache and audit log
    ```
-3. In Claude Code, register it as that role's MCP server, with the same two variables in the server's `env`.
+3. **Run the proxy with `ATS_ENV_FILE` pointing at that file:** `ATS_ENV_FILE=~/.config/ats/support-bot.env uv run ats-proxy`.
+4. **In Claude Code, register it as that role's MCP server.** Give the server, and the role's hooks, the same `ATS_ENV_FILE`: the hooks find their proxy through the role's data directory.
 
 ## Evals
 
