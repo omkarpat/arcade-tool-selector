@@ -5,6 +5,7 @@ It sends the proxy exactly what Claude Code's hooks send (each prompt, then a ve
 and only executes calls that are allowed AND read-only, so it never sends, changes or deletes anything.
 """
 
+import json
 import os
 import sys
 from datetime import datetime, timedelta
@@ -61,7 +62,10 @@ def summarize(result) -> str:
         for key, value in data.items():
             if isinstance(value, list):
                 return f"{len(value)} {key}"
-    return (result.content[0].text if result.content else "")[:80]
+    text = result.content[0].text if result.content else ""
+    if "authorization_url" in text:
+        return f"authorize once, then rerun: {json.loads(text)['authorization_url']}"
+    return text[:80]
 
 
 async def run() -> None:
