@@ -54,9 +54,9 @@ I built the scope eval before tuning anything: 40 labelled cases across three pr
 - **Date, not time.** "Tomorrow" can only be checked against date arguments if the judge knows today, so I added the date. My first version included the clock time, which changed the input every minute and produced results that moved between runs. Date only fixed that.
 - **Validate the dataset against the real schemas.** That check caught two of my own labelling bugs, including a YAML comma that silently split one argument into two.
 
-Current numbers, over 65 cases and 5 projects, at the default threshold of 0.85, with no hard-coded lists anywhere: **100% of out-of-scope calls blocked, 17% of in-scope calls held (mostly as approval prompts), 91% exact.** I chose 0.85 deliberately: the sweep holds 100% blocking from 0.5 to 0.9, and a lower bar only buys less friction (8% held at 0.6). For a security gate in front of broad grants, I'd rather the agent ask than guess. The disclosure check runs on its own, stricter threshold (0.5), because raising a shared threshold would have loosened it. The held cases are real validator weaknesses worth naming:
-- the support bot's `#support` posts score low for purpose;
-- calls with IDs the judge can't verify (an `event_id`) score low for "requested".
+Current numbers, over 65 cases and 5 projects, at the threshold of 0.65, with no hard-coded lists anywhere: **100% of out-of-scope calls blocked, 7% of in-scope calls held (as approval prompts), 95% exact.** I started at a strict 0.85. The sweep holds 100% blocking from 0.5 to 0.9, but real sessions on the three gateways held plain reads at 0.76–0.82 ("issues assigned to me" → `ListIssues(assignee=@me)`), so the agent asked for things the user had just asked for. At 0.65 they go through, and out-of-scope calls score far lower (0.00–0.07 in those runs). The disclosure check runs on its own, stricter threshold (0.5), because raising a shared threshold would have loosened it. The held cases are real validator weaknesses worth naming:
+- a `#support` post whose content the agent supplied (the outage's root cause), which scores low for "requested";
+- listing Slack channels for "Did any jobs fail today?", a step the judge doesn't see as toward the request.
 
 Sixty-five hand-written cases is a small, author-labelled set; it's a regression net, not proof. The next step is labelling real decisions from the audit log.
 

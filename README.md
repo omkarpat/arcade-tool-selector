@@ -183,9 +183,9 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 
 | Out-of-scope blocked | In-scope held | Exact | Judge latency |
 |---|---|---|---|
-| **100%** | 17% (mostly held as ask) | 91% | p50 0.3s · p95 0.5s |
+| **100%** | 7% (held as ask) | 95% | p50 0.35s · p95 0.4s |
 
-These are at the threshold of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own threshold (0.5), where lower is stricter.
+These are at the threshold of **0.65**. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9; held in-scope calls rise to 10% at 0.85 and 20% at 0.9. Real Claude Code sessions picked the bar: at 0.85, direct reads such as "issues assigned to me" (0.76) were held. The disclosure check has its own threshold (0.5), where lower is stricter.
 
 **Selection** (`evals/datasets/tool_selection.yaml`). 103 prompts, each labelled with the tools it needs. This is the baseline phase 4's prompt-time selector has to beat:
 

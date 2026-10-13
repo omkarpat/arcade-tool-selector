@@ -185,7 +185,7 @@ Every policy change can be replayed against this log to see what it would have b
 Every setting has one home, with no overrides and no fallbacks; anything missing fails loudly.
 - **Arcade platform:** each role is an Arcade project. Its gateway's **instructions** are the purpose; its allow-list, API key and OAuth grants bound what it can reach.
 - **`.env`** (repo root, gitignored, mode 600): `ARCADE_USER_ID` (its domain is the organization), `ARCADE_ORG_ID`, `OPENAI_API_KEY`, and `ATS_ROLES`, one `{project_id, api_key, gateway_url}` per role. `ATS_ROLE` picks the role.
-- **Code:** the policy itself (threshold 0.85, disclosure 0.5, destructive asks, send and destructive deny when out of scope), set from the scope eval.
+- **Code:** the policy itself (threshold 0.65, disclosure 0.5, destructive asks, send and destructive deny when out of scope), set from the scope eval.
 
 ### 4.8 Claude Code integration: proxy + hooks
 
@@ -309,7 +309,7 @@ A tool is exposed only when both pass. One request can make `Gmail_SendEmail` vi
 - `requested`: *do the user's own messages ask for this exact call?*
 - the evidence: the project's purpose, the user's own messages, the tool card and the arguments. Tool outputs are never evidence, so injected text can't raise the score.
 - the outcome by result:
-  - `within_purpose` below the threshold (0.85: strict by choice; the sweep holds 100% blocking from 0.5 to 0.9, and lower values only reduce friction): the tier decides, ask (Claude Code's permission prompt) or deny.
+  - `within_purpose` below the threshold (0.65: the sweep holds 100% blocking from 0.5 to 0.9, and real sessions held plain reads at 0.85): the tier decides, ask (Claude Code's permission prompt) or deny.
   - `requested` below the threshold: always ask. The judge's doubt about an in-purpose call goes to a human; it's never silently allowed or hard-denied.
 - the judge also gets today's date, so a request like "tomorrow" can be checked against date arguments.
 

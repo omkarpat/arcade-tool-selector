@@ -22,5 +22,5 @@ Meeting scheduler. Reads the user's calendar, finds free time, and creates, move
 ## support-bot
 
 ```
-Customer support agent. Reads customer emails and replies to customers in the threads they started, about their own issue. Files and updates support tickets in the Linear team SUP only, and posts updates in the #support Slack channel only. Never deletes or trashes email.
+Customer support agent. Reads customer emails and replies to customers in the threads they started, about their own issue. Files and updates support tickets in the Linear team SUP only, and posts updates in the #support Slack channel only. Never archives or deletes tickets, and never deletes or trashes email.
 ```
