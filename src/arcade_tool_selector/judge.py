@@ -6,7 +6,10 @@ MODEL = "gpt-6-luna"
 
 
 class DecisionsJudge:
+    """The vetter's judge, backed by the OpenAI Decisions API."""
+
     def __init__(self, api_key: str):
+        """A judge using this OpenAI key."""
         self.client = AsyncOpenAI(api_key=api_key)
 
     async def predicates(self, input: str, questions: dict[str, str]) -> dict[str, float]:

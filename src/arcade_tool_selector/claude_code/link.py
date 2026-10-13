@@ -19,15 +19,15 @@ class PromptSubmitted(BaseModel):
 
 
 class VetRequest(BaseModel):
-    """PreToolUse → proxy: should this call run? Answered with a policy.Decision."""
+    """PreToolUse → proxy: should this call run? Answered with a policy.Decision. `tool` is the gateway name."""
 
     session_id: str
-    tool: str  # gateway name, e.g. Gmail_SendEmail
+    tool: str
     arguments: dict
 
 
 def socket_path(claude_pid: int) -> Path:
-    # Under a short /tmp dir: AF_UNIX paths are capped at ~104 bytes.
+    """The socket for one Claude Code process, under a short /tmp dir: AF_UNIX paths are capped at ~104 bytes."""
     run_dir = Path("/tmp") / f"ats-{os.getuid()}"
     run_dir.mkdir(mode=0o700, exist_ok=True)
     return run_dir / f"{claude_pid}.sock"

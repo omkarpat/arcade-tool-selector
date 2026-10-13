@@ -1,4 +1,4 @@
-"""`ats-doctor`: check a setup end to end and say what to fix."""
+"""`ats-doctor`: check a setup end to end and say what to fix. Claude Code needs 2.1.295+ for hooks' onFailure."""
 
 import re
 import shutil
@@ -12,17 +12,19 @@ from arcade_tool_selector.judge import DecisionsJudge
 from arcade_tool_selector.platform import read_purpose
 from arcade_tool_selector.settings import load_settings
 
-MIN_CLAUDE_CODE = (2, 1, 295)  # hooks' onFailure
+MIN_CLAUDE_CODE = (2, 1, 295)
 problems = 0
 
 
 def report(ok: bool, what: str, fix: str = "") -> None:
+    """Print one check, with the fix when it failed, and count the failures."""
     global problems
     problems += not ok
     print(f"{'✓' if ok else '✗'} {what}" + (f"\n    → {fix}" if fix and not ok else ""))
 
 
 async def judge_error(api_key: str) -> str | None:
+    """Ask the judge one trivial question; the error, if it can't answer."""
     try:
         await DecisionsJudge(api_key).predicates("The sky is blue.", {"blue": "Does the input say the sky is blue?"})
     except Exception as e:
@@ -31,6 +33,7 @@ async def judge_error(api_key: str) -> str | None:
 
 
 async def check() -> None:
+    """Check .env, the gateway, its purpose, the judge and Claude Code, in that order."""
     try:
         settings = load_settings()
     except (KeyError, SystemExit, ValueError) as e:
@@ -64,6 +67,7 @@ async def check() -> None:
 
 
 def main() -> None:
+    """`ats-doctor` entry point: exits 1 when anything needs fixing."""
     anyio.run(check)
     print("\nAll good." if not problems else f"\n{problems} problem(s).")
     sys.exit(1 if problems else 0)

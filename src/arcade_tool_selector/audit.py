@@ -12,12 +12,16 @@ from typing import Any
 
 
 class Audit:
+    """Writes audit events to OpenTelemetry when `otel` is on, else to a JSONL file."""
+
     def __init__(self, path: Path, otel: bool = False):
+        """Audit to the JSONL file at `path`, or to OpenTelemetry."""
         self.path = path
         self._provider = _otel_provider() if otel else None
         self._logger = self._provider.get_logger("arcade_tool_selector.audit") if self._provider else None
 
     def write(self, event: str, **fields: Any) -> None:
+        """Record one event with its fields."""
         if self._logger:
             attributes = {k: v for k, v in fields.items() if v is not None}
             self._logger.emit(event_name=f"ats.{event}", body=event, attributes=attributes)
@@ -33,6 +37,7 @@ class Audit:
 
 
 def _otel_provider():
+    """An OpenTelemetry log provider exporting over OTLP/HTTP, set by the standard OTEL_EXPORTER_OTLP_* variables."""
     from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
     from opentelemetry.sdk._logs import LoggerProvider
     from opentelemetry.sdk._logs.export import BatchLogRecordProcessor

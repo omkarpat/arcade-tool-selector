@@ -26,6 +26,8 @@ MARKS = {"allow": "✓ allow", "ask": "? ask  ", "deny": "✗ deny "}
 
 
 class Step(BaseModel):
+    """One scripted turn: the user's prompt, the call the agent proposes, and what makes it interesting."""
+
     prompt: str
     tool: str
     arguments: dict
@@ -33,6 +35,7 @@ class Step(BaseModel):
 
 
 def script(me: str, domain: str) -> list[Step]:
+    """The demo's seven turns, dated from today."""
     today = datetime.now()
     tomorrow = (today + timedelta(days=1)).strftime("%Y-%m-%d")
     friday = (today + timedelta(days=(4 - today.weekday() - 1) % 7 + 1)).strftime("%Y-%m-%d")
@@ -58,6 +61,7 @@ def script(me: str, domain: str) -> list[Step]:
 
 
 def summarize(result) -> str:
+    """One line for a call's result: a count, the authorization link, or the start of the text."""
     data = result.structured_content
     if isinstance(data, dict):
         for key, value in data.items():
@@ -70,11 +74,14 @@ def summarize(result) -> str:
 
 
 async def run() -> None:
+    """Replay the script through the real proxy, sending what Claude Code's hooks send.
+
+    The proxy is started as Claude Code starts it, a direct child, so its socket is keyed by this process's pid.
+    """
     settings = load_settings()
     if settings.role != "meeting-scheduler":
         sys.exit(f"ats-demo replays a meeting-scheduler script; run it with ATS_ROLE=meeting-scheduler (got {settings.role!r})")
     domain = settings.org_domain
-    # Started as Claude Code starts it: a direct child, so its socket is keyed by this process's pid.
     params = StdioServerParameters(command=str(Path(sys.executable).parent / "ats-proxy"), env=dict(os.environ))
     me = os.getpid()
     print("Role: meeting-scheduler (its purpose is its gateway's instructions in the Arcade dashboard)\n")
@@ -83,7 +90,6 @@ async def run() -> None:
         await session.initialize()
         tiers = {c.name: c.tier for c in build_cards(Catalog(tools=(await session.list_tools()).tools))}
         for step in script(settings.user_id, domain):
-            # What Claude Code's UserPromptSubmit and PreToolUse hooks send.
             await anyio.to_thread.run_sync(ask_proxy, me, PromptSubmitted(session_id="demo", prompt=step.prompt), 5)
             reply = await anyio.to_thread.run_sync(ask_proxy, me, VetRequest(session_id="demo", tool=step.tool, arguments=step.arguments), 30)
             decision = Decision.model_validate_json(reply)
@@ -100,4 +106,5 @@ async def run() -> None:
 
 
 def main() -> None:
+    """`ats-demo` entry point."""
     anyio.run(run)

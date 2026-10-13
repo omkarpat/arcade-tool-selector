@@ -8,10 +8,13 @@ from arcade_tool_selector.settings import Settings
 
 
 class Gateway(ArcadeModel):
+    """The part of Arcade's gateway record the vetter reads."""
+
     instructions: str = ""
 
 
 def read_purpose(settings: Settings) -> str:
+    """The role's purpose: its gateway's instructions, stripped. Empty when none are set."""
     client = Arcade(api_key=settings.api_key)
     gateway = client.get(f"/v1/orgs/{settings.org_id}/projects/{settings.project_id}/gateways/{settings.gateway_id}", cast_to=Gateway)
     return gateway.instructions.strip()

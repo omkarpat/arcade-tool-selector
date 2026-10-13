@@ -3,7 +3,7 @@
 - UserPromptSubmit hands the user's prompt to the proxy: the evidence calls are judged against.
 - PreToolUse asks the proxy to vet the call. Deny and ask map to Claude Code's own decisions; allow says nothing,
   so Claude Code's permission rules still apply (the vetter only tightens).
-If the proxy can't be reached, the prompt or call is blocked.
+If the proxy can't be reached, the prompt or call is blocked. VET_TIMEOUT stays under the hook's 30s timeout.
 """
 
 import json
@@ -14,15 +14,20 @@ from arcade_tool_selector.claude_code.link import PromptSubmitted, VetRequest, a
 from arcade_tool_selector.policy import Decision
 
 PROMPT_TIMEOUT = 5
-VET_TIMEOUT = 25  # under the hook's 30s timeout
+VET_TIMEOUT = 25
 
 
 def block(message: str) -> None:
+    """Exit 2 with the reason: Claude Code blocks the prompt or call and shows it."""
     print(f"arcade-tool-selector: {message}", file=sys.stderr)
     sys.exit(2)
 
 
 def main() -> None:
+    """`ats-hook` entry point: read the hook event from stdin and answer it.
+
+    MCP tools reach hooks as mcp__<server>__<tool>; the proxy knows them by <tool>.
+    """
     if not os.environ.get("ATS_ROLE"):
         block("ATS_ROLE is not set: start Claude Code as `ATS_ROLE=<role> claude` (roles: ATS_ROLES in .env). Blocked.")
     claude_pid = int(os.environ["CLAUDE_PID"])
@@ -34,7 +39,6 @@ def main() -> None:
         except OSError as e:
             block(f"proxy unreachable ({e}); check /mcp. Prompt not sent.")
     elif command == "pre-tool-use":
-        # MCP tools reach hooks as mcp__<server>__<tool>.
         tool = event["tool_name"].split("__", 2)[2]
         request = VetRequest(session_id=event["session_id"], tool=tool, arguments=event["tool_input"])
         try:

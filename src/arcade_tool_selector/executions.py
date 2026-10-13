@@ -17,6 +17,8 @@ MATCH_WINDOW = timedelta(seconds=30)
 
 
 class ExecutionKey(BaseModel):
+    """What a `call` audit event stores to find Arcade's record of the execution."""
+
     user_id: str
     toolkit: str
     tool: str
@@ -24,12 +26,14 @@ class ExecutionKey(BaseModel):
 
     @classmethod
     def for_gateway_tool(cls, gateway_name: str, user_id: str, started_at: datetime) -> "ExecutionKey":
-        # Gateway tools are named <Toolkit>_<Tool>.
+        """The key for a gateway tool, named <Toolkit>_<Tool>."""
         toolkit, tool = gateway_name.split("_", 1)
         return cls(user_id=user_id, toolkit=toolkit, tool=tool, started_at=started_at)
 
 
 class Execution(ArcadeModel):
+    """One tool execution in Arcade's log."""
+
     id: str
     tool_name: str
     toolkit_name: str
@@ -39,6 +43,8 @@ class Execution(ArcadeModel):
 
 
 class ExecutionsPage(ArcadeModel):
+    """A page of Arcade's tool execution log."""
+
     items: list[Execution]
 
 

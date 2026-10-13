@@ -41,24 +41,37 @@ HookMessage = TypeAdapter(VetRequest | PromptSubmitted)
 
 
 class Proxy:
+    """The proxy's state for one Claude Code process.
+
+    - purpose: the gateway's instructions.
+    - prompts: the user's own prompts, per Claude Code session.
+    - vetted: calls the hook vetted and didn't deny, awaiting execution.
+    - session: the MCP client, once it has listed tools.
+    """
+
     def __init__(self, settings: Settings):
+        """Start empty: tools and purpose arrive with the first refresh."""
         self.settings = settings
         self.audit = Audit(settings.data_dir / "audit.jsonl", otel=settings.otel)
         self.judge = DecisionsJudge(settings.openai_api_key)
         self.catalog = Catalog(tools=[])
-        self.purpose = ""  # the gateway's instructions
+        self.purpose = ""
         self.vetter = self._vetter()
-        self.prompts: dict[str, list[str]] = {}  # the user's own prompts, per Claude Code session
-        self.vetted: Counter[str] = Counter()  # calls the hook vetted and didn't deny, awaiting execution
-        self.session: ServerSession | None = None  # the client, once it has listed tools
-
-    # MCP handlers
+        self.prompts: dict[str, list[str]] = {}
+        self.vetted: Counter[str] = Counter()
+        self.session: ServerSession | None = None
 
     async def list_tools(self, ctx: ServerRequestContext, params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+        """Serve the gateway's tools, and remember the client so it can be told when they change."""
         self.session = ctx.session
         return types.ListToolsResult(tools=self.catalog.tools)
 
     async def call_tool(self, ctx: ServerRequestContext, params: types.CallToolRequestParams) -> types.CallToolResult:
+        """Run a call through the gateway only if its hook vetted it and didn't deny it.
+
+        A `call` audit event is the key to Arcade's execution log, which holds status, timing, inputs and outputs.
+        A call that needs authorization never executed, so Arcade has no record and it's audited on its own.
+        """
         name, arguments = params.name, params.arguments or {}
         key = _call_key(name, arguments)
         if not self.vetted[key]:
@@ -67,17 +80,13 @@ class Proxy:
         started = ExecutionKey.for_gateway_tool(name, self.settings.user_id, datetime.now(UTC))
         result = await gateway.call_tool(self.settings, name, arguments)
         if _needs_authorization(result):
-            # Never executed, so Arcade has no record of it.
             self.audit.write("call_needs_authorization", tool=name, user_id=self.settings.user_id)
         else:
-            # Status, timing, inputs and outputs live in Arcade's execution log; this is the key to it.
             self.audit.write("call", **started.model_dump(mode="json"), is_error=bool(result.is_error))
         return result
 
-    # Hook socket
-
     async def handle_hook(self, stream: SocketStream) -> None:
-        # A failed exchange blocks that hook's prompt or call; it must not take down the proxy.
+        """Answer one hook message. A failed exchange blocks that hook's prompt or call, never the proxy."""
         async with stream:
             try:
                 message = HookMessage.validate_json(b"".join([chunk async for chunk in stream]))
@@ -87,14 +96,15 @@ class Proxy:
                 logger.exception("hook exchange failed")
 
     def prompt(self, message: PromptSubmitted) -> bytes:
+        """Keep the session's latest prompts as evidence. The text stays in memory; only its size is audited."""
         prompts = self.prompts.setdefault(message.session_id, [])
         prompts.append(message.prompt)
         del prompts[:-PROMPTS_KEPT]
-        # The prompt stays in memory; only its size is audited.
         self.audit.write("prompt_seen", session_id=message.session_id, chars=len(message.prompt))
         return b"{}"
 
     async def vet(self, message: VetRequest) -> bytes:
+        """Judge a call against the purpose and the session's prompts; remember it unless denied."""
         evidence = Evidence(purpose=self.purpose, user_messages=self.prompts.get(message.session_id, []))
         decision = await self.vetter.vet(message.tool, message.arguments, evidence)
         self.audit.write("vetted", tool=message.tool, arg_keys=sorted(message.arguments), **decision.model_dump())
@@ -102,12 +112,12 @@ class Proxy:
             self.vetted[_call_key(message.tool, message.arguments)] += 1
         return decision.model_dump_json().encode()
 
-    # Tools and purpose
-
     def _vetter(self) -> Vetter:
+        """A vetter for the current tools, with the user's email domain as the organization."""
         return Vetter(ScopeConfig(org_domains=[self.settings.org_domain]), PolicyConfig(), build_cards(self.catalog), self.judge)
 
     async def refresh(self) -> None:
+        """Re-read the gateway's tools and purpose; audit and announce any change to the tools."""
         new = Catalog(tools=await gateway.list_tools(self.settings))
         self.purpose = await anyio.to_thread.run_sync(read_purpose, self.settings)
         if not self.purpose:
@@ -128,6 +138,7 @@ class Proxy:
             await self.session.send_tool_list_changed()
 
     async def poll(self) -> None:
+        """Refresh every 15 minutes. A failed refresh denies every call until the purpose can be read again."""
         while True:
             await anyio.sleep(REFRESH_INTERVAL)
             try:
@@ -138,6 +149,10 @@ class Proxy:
 
     @asynccontextmanager
     async def lifespan(self, _server: Server):
+        """Load tools and purpose, then serve the hook socket and poll until the client disconnects.
+
+        The socket is keyed by the parent pid: the proxy is Claude Code's direct child.
+        """
         await self.refresh()
         path = socket_path(os.getppid())
         path.unlink(missing_ok=True)
@@ -152,6 +167,7 @@ class Proxy:
 
 
 def _call_key(tool: str, arguments: dict) -> str:
+    """One call's identity: its tool and arguments."""
     return tool + json.dumps(arguments, sort_keys=True)
 
 
@@ -166,10 +182,12 @@ def _needs_authorization(result: types.CallToolResult) -> bool:
 
 
 def _error(text: str) -> types.CallToolResult:
+    """A tool error the agent sees as the call's result."""
     return types.CallToolResult(content=[types.TextContent(type="text", text=text)], is_error=True)
 
 
 async def serve() -> None:
+    """Run the proxy over stdio for the role in ATS_ROLE, logging to stderr and the role's proxy.log."""
     settings = load_settings()
     logging.basicConfig(
         level=logging.INFO,
@@ -184,4 +202,5 @@ async def serve() -> None:
 
 
 def main() -> None:
+    """`ats-proxy` entry point."""
     anyio.run(serve)

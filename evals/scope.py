@@ -30,25 +30,36 @@ HERE = Path(__file__).parent
 
 
 class Project(BaseModel):
+    """A project's purpose, and who counts as inside the organization (in production, the user's email domain)."""
+
     prompt: str
-    org_domains: list[str] = []  # who counts as inside the organization (production: the user's email domain)
+    org_domains: list[str] = []
 
 
 class Call(BaseModel):
+    """A proposed tool call."""
+
     tool: str
     args: dict
 
 
 class Case(BaseModel):
+    """A project, the user's own messages and a proposed call, labeled allow / ask / deny.
+
+    `injected` is text that came from a tool result: never evidence.
+    """
+
     project: str
     user: list[str]
     call: Call
     expect: Action
-    injected: str | None = None  # came from a tool result: never evidence
+    injected: str | None = None
     tags: list[str] = []
 
 
 class Outcome(BaseModel):
+    """A case's decision, the call's tier and how long the judge took."""
+
     case: Case
     decision: Decision
     tier: Tier
@@ -68,10 +79,12 @@ def _resolve_dates(text: str) -> str:
 
 
 def blocked(action: Action) -> bool:
+    """Whether the call was kept from running (ask or deny)."""
     return action != "allow"
 
 
 def make_vetters(catalog: Catalog, projects: dict[str, Project]) -> dict[str, Vetter]:
+    """One vetter per project, sharing the live judge."""
     judge = DecisionsJudge(os.environ["OPENAI_API_KEY"])
     return {
         name: Vetter(ScopeConfig(org_domains=p.org_domains), PolicyConfig(), build_cards(catalog), judge)
@@ -80,9 +93,11 @@ def make_vetters(catalog: Catalog, projects: dict[str, Project]) -> dict[str, Ve
 
 
 async def run(vetters: dict[str, Vetter], projects: dict[str, Project], cases: list[Case]) -> list[Outcome]:
+    """Vet every case concurrently, keeping the dataset's order."""
     outcomes: list[Outcome | None] = [None] * len(cases)
 
     async def one(i: int, case: Case) -> None:
+        """Vet one case and time it."""
         vetter = vetters[case.project]
         evidence = Evidence(purpose=projects[case.project].prompt, user_messages=case.user)
         started = time.monotonic()
@@ -107,6 +122,11 @@ def rates(pairs: list[tuple[Action, Action]]) -> tuple[float, float, float]:
 
 
 def main() -> None:
+    """Check the dataset against the catalog, run every case, then sweep the scope threshold.
+
+    The sweep re-decides only judged cases: unknown tools, judge failures and disclosure (its own threshold) don't
+    move with the scope threshold.
+    """
     load_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("--catalog", type=Path, default=HERE / "catalogs" / "workspace.json")
@@ -138,7 +158,6 @@ def main() -> None:
     latencies = sorted(o.seconds for o in outcomes if o.decision.probability is not None)
     print(f"judge latency per call: p50 {statistics.median(latencies):.2f}s · p95 {latencies[int(len(latencies) * 0.95) - 1]:.2f}s\n")
 
-    # Unknown tools, judge failures and disclosure (its own threshold) don't move with the scope threshold.
     judged = [o for o in outcomes if o.decision.probability is not None and o.decision.check != "disclosure"]
     fixed = [(o.case.expect, o.decision.action) for o in outcomes if o not in judged]
     print("threshold sweep  blocked  friction  exact")

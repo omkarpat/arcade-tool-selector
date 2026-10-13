@@ -21,36 +21,42 @@ from arcade_tool_selector.settings import load_settings
 pytestmark = [pytest.mark.skipif(not os.environ.get("ATS_LIVE"), reason="set ATS_LIVE=1"), pytest.mark.anyio]
 
 BIN = Path(sys.executable).parent
-DEFAULT_ROLE = "workspace-search"  # its gateway's purpose covers reading the user's calendar
+DEFAULT_ROLE = "workspace-search"
 
 
 @pytest.fixture
 def anyio_backend():
+    """Run the async tests on asyncio."""
     return "asyncio"
 
 
 def role_env(data_dir, role: str) -> dict:
-    # Everything comes from .env and the role's gateway; the data dir is isolated per test.
+    """The environment Claude Code gives the proxy and hooks; everything else comes from .env and the role's gateway, and the data dir is isolated per test."""
     return {**os.environ, "ATS_DATA_DIR": str(data_dir), "ATS_ROLE": role, "CLAUDE_PID": str(os.getpid())}
 
 
 def proxy(data_dir, role: str = DEFAULT_ROLE):
+    """Start the proxy as a direct child of this process, as Claude Code does."""
     return stdio_client(StdioServerParameters(command=str(BIN / "ats-proxy"), env=role_env(data_dir, role)))
 
 
 def hook(name: str, data_dir, event: dict, role: str = DEFAULT_ROLE) -> subprocess.CompletedProcess:
+    """Run a hook with a Claude Code event on stdin."""
     return subprocess.run([BIN / "ats-hook", name], input=json.dumps(event), env=role_env(data_dir, role), capture_output=True, text=True)
 
 
 def pre_tool_use(data_dir, role: str, tool: str, arguments: dict) -> subprocess.CompletedProcess:
+    """Run the PreToolUse hook for a call to the `arcade` server."""
     return hook("pre-tool-use", data_dir, {"session_id": "s1", "tool_name": f"mcp__arcade__{tool}", "tool_input": arguments}, role)
 
 
 def audit(data_dir, role: str = DEFAULT_ROLE) -> list[dict]:
+    """The role's audit events, oldest first."""
     return [json.loads(line) for line in (data_dir / role / "audit.jsonl").read_text().splitlines()]
 
 
 async def test_vetted_call_runs_through_the_gateway(tmp_path):
+    """Workspace Search, whose purpose covers reading the calendar: every tools/list page is served, and a vetted call runs through Arcade."""
     async with proxy(tmp_path) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         names = {t.name for t in (await session.list_tools()).tools}
@@ -68,12 +74,12 @@ async def test_vetted_call_runs_through_the_gateway(tmp_path):
 
 
 async def test_call_resolves_to_arcade_execution(tmp_path):
-    """A `call` audit event carries the keys to find Arcade's own record of the execution."""
+    """A `call` audit event carries the keys to find Arcade's own record of the execution, which lags the call by a few seconds."""
     await test_vetted_call_runs_through_the_gateway(tmp_path)
     os.environ.update({"ATS_ROLE": DEFAULT_ROLE, "ATS_DATA_DIR": str(tmp_path)})
     key = ExecutionKey.model_validate(next(e for e in audit(tmp_path) if e["event"] == "call"))
     with anyio.fail_after(60):
-        while (execution := find_execution(key, load_settings())) is None:  # Arcade's log lags the call by a few seconds
+        while (execution := find_execution(key, load_settings())) is None:
             await anyio.sleep(3)
     print("arcade execution:", execution.id, execution.execution_status)
     assert (execution.toolkit_name, execution.tool_name) == ("GoogleCalendar", "WhoAmI")
@@ -81,27 +87,27 @@ async def test_call_resolves_to_arcade_execution(tmp_path):
 
 
 async def test_scope_enforced_by_hook_and_proxy(tmp_path):
-    """The meeting-scheduler role, its purpose read from its own gateway: the hook denies out-of-scope calls, and
-    the proxy runs nothing the hook didn't vet."""
+    """The meeting-scheduler role, its purpose read from its own gateway, end to end.
+
+    An out-of-scope reply is denied by the hook before Claude Code runs it, and the proxy won't run it either.
+    An in-scope read says nothing, then runs through the proxy. A call that skipped the hook never reaches Arcade.
+    """
     role = "meeting-scheduler"
     async with proxy(tmp_path, role) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         await session.list_tools()
         hook("user-prompt-submit", tmp_path, {"session_id": "s1", "prompt": "What's on my calendar tomorrow?"}, role)
 
-        # An out-of-scope reply is denied before Claude Code runs it, and the proxy won't run it either.
         reply = {"reply_to_message_id": "msg_invoice", "body": "We'll pay the invoice next week."}
         denied = pre_tool_use(tmp_path, role, "Gmail_ReplyToEmail", reply)
         assert json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"] == "deny"
         refused = await session.call_tool("Gmail_ReplyToEmail", reply)
         assert refused.is_error and "not vetted" in refused.content[0].text
 
-        # An in-scope read says nothing, then runs through the proxy.
         args = {"min_end_datetime": "2026-10-13T00:00:00", "max_start_datetime": "2026-10-14T00:00:00"}
         assert pre_tool_use(tmp_path, role, "GoogleCalendar_ListEvents", args).stdout == ""
         assert not (await session.call_tool("GoogleCalendar_ListEvents", args)).is_error
 
-        # A call that skipped the hook never reaches Arcade.
         bypassed = await session.call_tool("GoogleCalendar_ListCalendars", {})
         assert bypassed.is_error and "not vetted" in bypassed.content[0].text
 
@@ -111,6 +117,7 @@ async def test_scope_enforced_by_hook_and_proxy(tmp_path):
 
 
 def test_hook_blocks_without_a_role(tmp_path):
+    """Without ATS_ROLE, the hook blocks with the fix in its message."""
     env = {k: v for k, v in role_env(tmp_path, DEFAULT_ROLE).items() if k != "ATS_ROLE"}
     result = subprocess.run([BIN / "ats-hook", "user-prompt-submit"], input="{}", env=env, capture_output=True, text=True)
     assert result.returncode == 2 and "ATS_ROLE is not set" in result.stderr

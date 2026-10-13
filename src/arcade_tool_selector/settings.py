@@ -31,10 +31,13 @@ class Role(BaseModel):
 
     @property
     def gateway_id(self) -> str:
+        """The gateway's id: the last segment of its URL."""
         return self.gateway_url.rstrip("/").rsplit("/", 1)[-1]
 
 
 class Settings(BaseModel):
+    """Everything the proxy, hooks and tools need for one role. data_dir holds the role's audit and proxy logs."""
+
     role: str
     project_id: str
     api_key: str
@@ -53,6 +56,10 @@ class Settings(BaseModel):
 
 
 def load_settings() -> Settings:
+    """The role named by ATS_ROLE, from .env. Fails loudly on a missing or unknown role.
+
+    ATS_DATA_DIR only isolates tests.
+    """
     load_env()
     if not (name := os.environ.get("ATS_ROLE")):
         raise SystemExit("ATS_ROLE is not set: name one of the roles in ATS_ROLES in .env")
@@ -60,7 +67,6 @@ def load_settings() -> Settings:
     if name not in roles:
         raise SystemExit(f"ATS_ROLE={name!r} is not in ATS_ROLES in .env (roles: {', '.join(roles)})")
     role = roles[name]
-    # The role's audit and proxy logs. ATS_DATA_DIR only isolates tests.
     data_dir = Path(os.environ.get("ATS_DATA_DIR", DATA_ROOT)) / name
     data_dir.mkdir(parents=True, exist_ok=True)
     return Settings(
