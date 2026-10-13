@@ -1,4 +1,5 @@
 import hashlib
+import io
 import os
 import re
 from pathlib import Path
@@ -17,9 +18,15 @@ _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def load_env() -> None:
-    """Load ATS_ENV_FILE (default: repo .env); real environment variables win."""
-    path = Path(os.environ.get("ATS_ENV_FILE", REPO_ROOT / ".env")).expanduser()
-    for key, value in dotenv_values(path).items():
+    """Load the repo .env, then ATS_ENV_FILE (e.g. a role's file) on top; real environment variables win.
+
+    Read as one file, so a role file can reference repo .env values: ARCADE_API_KEY=${SUPPORT_BOT_ARCADE_API_KEY}.
+    """
+    files = [REPO_ROOT / ".env"]
+    if "ATS_ENV_FILE" in os.environ:
+        files.append(Path(os.environ["ATS_ENV_FILE"]).expanduser())
+    text = "\n".join(path.read_text() for path in files if path.exists())
+    for key, value in dotenv_values(stream=io.StringIO(text)).items():
         if value:
             os.environ.setdefault(key, value)
 
