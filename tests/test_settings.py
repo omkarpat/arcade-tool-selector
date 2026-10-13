@@ -17,3 +17,21 @@ def test_role_file_overlays_repo_env_and_can_reference_it(tmp_path, monkeypatch)
     assert os.environ["ARCADE_API_KEY"] == "arc_support"  # the role's key, from the repo .env
     assert os.environ["OPENAI_API_KEY"] == "sk-shared"  # inherited
     assert os.environ["ATS_GATEWAY_URL"] == "https://api.arcade.dev/mcp/gw_support"
+
+
+def test_role_from_the_roles_dict(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "roles").mkdir(parents=True)
+    (repo / "roles" / "support-bot.yaml").write_text("project: support-bot\nserver_name: support-bot\nproject_prompt: Support.\n")
+    (repo / ".env").write_text(
+        "ARCADE_API_KEY=arc_workspace\nATS_GATEWAY_URL=https://api.arcade.dev/mcp/gw_workspace\nARCADE_USER_ID=me@acme.com\n"
+        'ATS_ROLES=\'{"support-bot": {"project_id": "7d77", "api_key": "arc_support", '
+        '"gateway_url": "https://api.arcade.dev/mcp/gw_support", "config": "roles/support-bot.yaml"}}\'\n'
+    )
+    monkeypatch.setattr(settings, "REPO_ROOT", repo)
+    monkeypatch.setattr(os, "environ", {"ATS_ROLE": "support-bot", "ATS_DATA_DIR": str(tmp_path / "data")})
+
+    loaded = settings.load_settings()
+
+    assert (loaded.api_key, loaded.gateway_url, loaded.config.project) == ("arc_support", "https://api.arcade.dev/mcp/gw_support", "support-bot")
+    assert loaded.data_dir == tmp_path / "data" / "support-bot"  # the role's own cache, audit log and hook socket

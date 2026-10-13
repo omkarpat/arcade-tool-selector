@@ -10,6 +10,8 @@ from arcadepy import Arcade
 from arcadepy import BaseModel as ArcadeModel
 from pydantic import BaseModel
 
+from arcade_tool_selector.settings import active_role
+
 MATCH_WINDOW = timedelta(seconds=30)
 
 
@@ -40,10 +42,13 @@ class ExecutionsPage(ArcadeModel):
 
 
 def find_execution(key: ExecutionKey) -> Execution | None:
-    """The Arcade execution closest to `key.started_at`. Needs ARCADE_ORG_ID / ARCADE_PROJECT_ID."""
-    client = Arcade(api_key=os.environ["ARCADE_API_KEY"])
+    """The Arcade execution closest to `key.started_at`. Needs ARCADE_ORG_ID, and the active role's project
+    (or ARCADE_PROJECT_ID without one)."""
+    role = active_role()
+    project_id = role.project_id if role else os.environ["ARCADE_PROJECT_ID"]
+    client = Arcade(api_key=role.api_key if role else os.environ["ARCADE_API_KEY"])
     page = client.get(
-        f"/v1/orgs/{os.environ['ARCADE_ORG_ID']}/projects/{os.environ['ARCADE_PROJECT_ID']}/tool_executions",
+        f"/v1/orgs/{os.environ['ARCADE_ORG_ID']}/projects/{project_id}/tool_executions",
         cast_to=ExecutionsPage,
         options={
             "params": {

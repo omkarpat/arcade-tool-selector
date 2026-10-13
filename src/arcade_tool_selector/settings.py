@@ -7,7 +7,7 @@ from typing import Annotated
 
 import yaml
 from dotenv import dotenv_values
-from pydantic import BaseModel, BeforeValidator, ConfigDict
+from pydantic import BaseModel, BeforeValidator, ConfigDict, TypeAdapter
 
 from arcade_tool_selector.policy import PolicyConfig, ScopeConfig
 
@@ -38,9 +38,27 @@ def parse_duration(value: str | int) -> float:
     return int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
 
 
+class Role(BaseModel):
+    """One Arcade project acting as a role: its own key, gateway and project config."""
+
+    project_id: str
+    api_key: str
+    gateway_url: str
+    config: str
+
+
+def active_role() -> Role | None:
+    """The role named by ATS_ROLE, from the ATS_ROLES dict in .env. None: the top-level settings apply."""
+    name = os.environ.get("ATS_ROLE")
+    return TypeAdapter(dict[str, Role]).validate_json(os.environ["ATS_ROLES"])[name] if name else None
+
+
 def data_dir() -> Path:
     raw = os.environ.get("ATS_DATA_DIR") or os.environ.get("CLAUDE_PLUGIN_DATA") or "~/.local/share/ats"
     path = Path(raw).expanduser()
+    # Each role keeps its own cache, audit log and hook socket; its proxy and hooks both derive it from ATS_ROLE.
+    if role := os.environ.get("ATS_ROLE"):
+        path = path / role
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -81,12 +99,16 @@ class Settings(BaseModel):
 
 def load_settings() -> Settings:
     load_env()
-    config_path = Path(os.environ.get("ATS_CONFIG", "ats.yaml")).expanduser()
+    if role := active_role():
+        gateway_url, api_key, config = role.gateway_url, role.api_key, role.config
+    else:
+        gateway_url, api_key, config = os.environ["ATS_GATEWAY_URL"], os.environ["ARCADE_API_KEY"], os.environ.get("ATS_CONFIG", "ats.yaml")
+    config_path = Path(config).expanduser()
     if not config_path.is_absolute():
         config_path = REPO_ROOT / config_path
     return Settings(
-        gateway_url=os.environ["ATS_GATEWAY_URL"],
-        api_key=os.environ["ARCADE_API_KEY"],
+        gateway_url=gateway_url,
+        api_key=api_key,
         user_id=os.environ["ARCADE_USER_ID"],
         config=ProjectConfig.model_validate(yaml.safe_load(config_path.read_text())),
         data_dir=data_dir(),
