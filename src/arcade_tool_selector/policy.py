@@ -67,7 +67,7 @@ class ScopeConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    threshold: float = 0.85  # purpose and requested must both reach this; lower answers ask or deny
+    threshold: float = 0.65  # purpose and requested must both reach this; lower answers ask or deny
     disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     org_domains: list[str] = []  # who counts as inside the organization
 
