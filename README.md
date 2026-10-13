@@ -151,12 +151,11 @@ Then run `ATS_ROLE=support-bot claude`. Each role keeps its own audit log under 
 
 ## Evals
 
-Both evals run against a local snapshot of your gateway's catalog:
+The scope eval runs against a local snapshot of your gateway's catalog:
 
 ```sh
 uv run python evals/snapshot.py    # save the gateway's catalog locally
 uv run python evals/scope.py       # scope decisions with the live judge (65 cases, ~15s)
-uv run python evals/run.py         # tool-selection baselines (offline)
 ```
 
 **Scope.** There are 65 cases across five made-up projects that share one broad gateway. They cover the same tool used in and out of scope, prompt injection, rules that exist only in the purpose text, and leaking internal details to customers.
@@ -166,14 +165,6 @@ uv run python evals/run.py         # tool-selection baselines (offline)
 | **100%** | 7% | 95% | p50 0.35s · p95 0.4s |
 
 Those numbers are at a threshold of 0.65. Anywhere from 0.5 to 0.9 still blocks every out-of-scope call, but higher thresholds hold more legitimate calls. I first picked 0.85, and real sessions kept pausing on plain reads like "issues assigned to me", so I lowered it.
-
-**Tool selection.** There are 103 prompts, each labelled with the tools it needs. This is the baseline a future prompt-time tool selector would have to beat:
-
-| Selector | Recall | Tools sent | Schema tokens per turn |
-|---|---|---|---|
-| All tools | 100% | 166 | ~167k |
-| BM25 top 8 | 60% | 8 | ~11k |
-| BM25 top 40 | 90% | 40 | ~49k |
 
 **Tests:**
 
@@ -195,7 +186,7 @@ Arcade already logs every executed call, so the proxy doesn't duplicate that. It
 | `src/arcade_tool_selector/claude_code/` | The Claude Code hooks |
 | `src/arcade_tool_selector/platform.py` | Reads a role's purpose from Arcade |
 | `src/arcade_tool_selector/judge.py` | The Decisions API client |
-| `evals/` | Scope and selection evals |
+| `evals/` | The scope eval |
 
 ## Credits
 
