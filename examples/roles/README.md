@@ -2,8 +2,7 @@
 
 Each role is an Arcade project with its own gateway, API key and OAuth grants. Its **purpose lives only in
 the gateway's instructions** (Arcade dashboard → the project → MCP Gateways → the gateway → Instructions).
-The vetter judges every call against it; the agent never sees it. The YAML files here hold only `scope`
-and `policy`.
+The vetter judges every call against it; the agent never sees it.
 
 Purposes used for the three roles in this repo:
 
