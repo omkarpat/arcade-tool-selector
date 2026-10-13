@@ -1,10 +1,12 @@
-"""`ats-demo`: one project, a short script, the real proxy, vetter and Arcade gateway; no Claude Code needed.
+"""`ATS_ROLE=meeting-scheduler ats-demo`: the meeting-scheduler role, a short script, the real proxy, vetter and
+Arcade gateway; no Claude Code needed.
 
 It sends the proxy exactly what Claude Code's hooks send (each prompt, then a vet request per call),
 and only executes calls that are allowed AND read-only, so it never sends, changes or deletes anything.
 """
 
 import os
+import sys
 from datetime import datetime, timedelta
 
 import anyio
@@ -16,9 +18,8 @@ from arcade_tool_selector.cards import build_cards
 from arcade_tool_selector.catalog import CatalogStore
 from arcade_tool_selector.claude_code.runtime import PromptSubmitted, VetRequest, ask_proxy
 from arcade_tool_selector.policy import Decision
-from arcade_tool_selector.settings import REPO_ROOT, data_dir, load_env, load_settings
+from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
-TEMPLATE = REPO_ROOT / "examples" / "demo" / "meeting-scheduler.yaml"
 MARKS = {"allow": "✓ allow", "ask": "? ask  ", "deny": "✗ deny "}
 
 
@@ -64,16 +65,13 @@ def summarize(result) -> str:
 
 
 async def run() -> None:
-    load_env()
     settings = load_settings()
-    root = data_dir() / "demo"
-    root.mkdir(exist_ok=True)
+    if settings.role != "meeting-scheduler":
+        sys.exit(f"ats-demo replays a meeting-scheduler script; run it with ATS_ROLE=meeting-scheduler (got {settings.role!r})")
+    root = settings.data_dir
     domain = settings.user_id.rsplit("@", 1)[-1]
-    config = root / "meeting-scheduler.yaml"
-    config.write_text(TEMPLATE.read_text().replace("{domain}", domain))
-    env = {**os.environ, "ATS_CONFIG": str(config), "ATS_DATA_DIR": str(root)}
-    params = StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=env)
-    print(f"Project: meeting-scheduler ({TEMPLATE.relative_to(REPO_ROOT)}, team domain {domain})\nGateway: every toolkit this user authorized\n")
+    params = StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=dict(os.environ))
+    print("Role: meeting-scheduler (its purpose is its gateway's instructions in the Arcade dashboard)\n")
 
     async with stdio_client(params, errlog=open(os.devnull, "w")) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
@@ -85,9 +83,9 @@ async def run() -> None:
             reply = await anyio.to_thread.run_sync(ask_proxy, root, VetRequest(session_id="demo", tool=step.tool, arguments=step.arguments), 30)
             decision = Decision.model_validate_json(reply)
             print(f"you> {step.prompt}")
-            print(f"     {step.tool} ({tiers[step.tool]})" + (f" · {step.note}" if step.note else ""))
+            print(f"     {step.tool} ({decision.tier or tiers.get(step.tool) or 'not on this gateway'})" + (f" · {step.note}" if step.note else ""))
             print(f"     {MARKS[decision.action]}  {decision.reason}")
-            if decision.action == "allow" and tiers[step.tool] == "read":
+            if decision.action == "allow" and tiers.get(step.tool) == "read":
                 result = await session.call_tool(step.tool, step.arguments)
                 print(f"     → ran through Arcade: {'error: ' if result.is_error else ''}{summarize(result)}")
             elif decision.action == "ask":

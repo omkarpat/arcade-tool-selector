@@ -21,7 +21,7 @@ CATALOG = Catalog.from_tools(
         tool("Gmail_TrashEmail", destructive=True),
     ]
 )
-EVIDENCE = Evidence(project_prompt="Meeting scheduler.", user_messages=["Set up a sync with dana@acme.com"])
+EVIDENCE = Evidence(purpose="Meeting scheduler.", user_messages=["Set up a sync with dana@acme.com"])
 
 
 class Judge:
@@ -79,13 +79,21 @@ def test_in_scope_allows_except_tiers_needing_approval():
     assert vet(Judge(), "Gmail_TrashEmail").action == "ask"
 
 
-def test_disclosure_denies_only_calls_that_reach_people_in_protected_projects():
-    protected = ScopeConfig(org_domains=["acme.com"], protect_internal=True)
-    assert vet(Judge(reaches=0.9, discloses=0.9), "GoogleCalendar_CreateEvent", protected).check == "disclosure"
-    assert vet(Judge(reaches=0.1, discloses=0.9), "GoogleCalendar_CreateEvent", protected).action == "allow"
-    assert vet(Judge(reaches=0.9, discloses=0.9), "GoogleCalendar_CreateEvent").action == "allow"  # not protected
+def test_disclosure_denies_only_calls_that_reach_people():
+    assert vet(Judge(reaches=0.9, discloses=0.9), "GoogleCalendar_CreateEvent").check == "disclosure"
+    assert vet(Judge(reaches=0.1, discloses=0.9), "GoogleCalendar_CreateEvent").action == "allow"  # stays with the user
 
 
-def test_judge_down_fails_closed_except_read():
-    assert vet(Judge(fail=True), "GoogleCalendar_CreateEvent").action == "deny"
-    assert vet(Judge(fail=True), "GoogleCalendar_ListEvents").action == "ask"
+
+def test_judge_down_denies_every_call():
+    assert vet(Judge(fail=True), "GoogleCalendar_CreateEvent").check == "judge_unavailable"
+    assert vet(Judge(fail=True), "GoogleCalendar_ListEvents").action == "deny"
+
+
+
+def test_no_purpose_denies_every_call_without_asking_the_judge():
+    judge = Judge()
+    vetter = Vetter(ScopeConfig(), PolicyConfig(), build_cards(CATALOG), judge)
+    decision = anyio.run(vetter.vet, "GoogleCalendar_ListEvents", {}, Evidence(purpose="  ", user_messages=["hi"]))
+    assert (decision.action, decision.check) == ("deny", "no_purpose")
+    assert judge.asked == []

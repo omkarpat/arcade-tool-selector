@@ -1,94 +1,62 @@
+"""Settings: the repo .env and the Arcade platform are the only sources; nothing else is configured locally.
+
+.env holds ARCADE_USER_ID, ARCADE_ORG_ID, OPENAI_API_KEY and ATS_ROLES (one Arcade project per role). ATS_ROLE,
+set by whoever launches the proxy or a hook, picks the role. Each role's purpose is its gateway's instructions on
+the Arcade platform (see platform.py).
+"""
+
 import hashlib
-import io
 import os
-import re
 from pathlib import Path
-from typing import Annotated
 
-import yaml
 from dotenv import dotenv_values
-from pydantic import BaseModel, BeforeValidator, ConfigDict, TypeAdapter
-
-from arcade_tool_selector.policy import PolicyConfig, ScopeConfig
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-_DURATION = re.compile(r"^(\d+)([smhd]?)$")
-_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+DATA_ROOT = Path("~/.local/share/ats").expanduser()
 
 
 def load_env() -> None:
-    """Load the repo .env, then ATS_ENV_FILE (e.g. a role's file) on top; real environment variables win.
-
-    Read as one file, so the overlay can reference repo .env values with ${NAME}.
-    """
-    files = [REPO_ROOT / ".env"]
-    if "ATS_ENV_FILE" in os.environ:
-        files.append(Path(os.environ["ATS_ENV_FILE"]).expanduser())
-    text = "\n".join(path.read_text() for path in files if path.exists())
-    for key, value in dotenv_values(stream=io.StringIO(text)).items():
-        if value:
-            os.environ.setdefault(key, value)
-
-
-def parse_duration(value: str | int) -> float:
-    match = _DURATION.match(str(value).strip())
-    if not match:
-        raise ValueError(f"bad duration {value!r}; use e.g. 30s, 15m, 24h")
-    return int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+    """Load the repo .env into the environment. The file is the source: it overrides inherited values."""
+    os.environ.update({key: value for key, value in dotenv_values(REPO_ROOT / ".env").items() if value})
 
 
 class Role(BaseModel):
-    """One Arcade project acting as a role: its own key, gateway and project config."""
+    """One Arcade project acting as a role: its own key and gateway."""
+
+    model_config = ConfigDict(extra="forbid")
 
     project_id: str
     api_key: str
     gateway_url: str
-    config: str
+
+    @property
+    def gateway_id(self) -> str:
+        return self.gateway_url.rstrip("/").rsplit("/", 1)[-1]
 
 
-def active_role() -> Role | None:
-    """The role named by ATS_ROLE, from the ATS_ROLES dict in .env. None: the top-level settings apply."""
-    name = os.environ.get("ATS_ROLE")
-    return TypeAdapter(dict[str, Role]).validate_json(os.environ["ATS_ROLES"])[name] if name else None
+def role_name() -> str:
+    if not (name := os.environ.get("ATS_ROLE")):
+        raise SystemExit("ATS_ROLE is not set: name one of the roles in ATS_ROLES in .env")
+    return name
 
 
 def data_dir() -> Path:
-    raw = os.environ.get("ATS_DATA_DIR") or os.environ.get("CLAUDE_PLUGIN_DATA") or "~/.local/share/ats"
-    path = Path(raw).expanduser()
-    # Each role keeps its own cache, audit log and hook socket; its proxy and hooks both derive it from ATS_ROLE.
-    if role := os.environ.get("ATS_ROLE"):
-        path = path / role
+    """The role's cache, audit log and hook socket. Its proxy and hooks both derive it from ATS_ROLE."""
+    path = Path(os.environ.get("ATS_DATA_DIR", DATA_ROOT)) / role_name()
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
-# Seconds; config writes 30s, 15m, 24h or a bare number.
-Duration = Annotated[float, BeforeValidator(parse_duration)]
-
-
-class CatalogConfig(BaseModel):
-    refresh_interval: Duration = 15 * 60
-    max_staleness: Duration = 24 * 3600
-
-
-class ProjectConfig(BaseModel):
-    # Selection and judge keys belong to later phases.
-    model_config = ConfigDict(extra="allow")
-
-    project: str
-    server_name: str
-    project_prompt: str
-    catalog: CatalogConfig = CatalogConfig()
-    scope: ScopeConfig = ScopeConfig()
-    policy: PolicyConfig = PolicyConfig()
-
-
 class Settings(BaseModel):
-    gateway_url: str
+    role: str
+    project_id: str
     api_key: str
+    gateway_url: str
+    gateway_id: str
+    org_id: str
     user_id: str
-    config: ProjectConfig
+    openai_api_key: str
     data_dir: Path
     otel: bool
 
@@ -96,21 +64,28 @@ class Settings(BaseModel):
     def gateway_key(self) -> str:
         return hashlib.sha256(self.gateway_url.rstrip("/").encode()).hexdigest()[:16]
 
+    @property
+    def org_domain(self) -> str:
+        """Who counts as inside the organization: the user's own email domain."""
+        return self.user_id.rsplit("@", 1)[-1]
+
 
 def load_settings() -> Settings:
     load_env()
-    if role := active_role():
-        gateway_url, api_key, config = role.gateway_url, role.api_key, role.config
-    else:
-        gateway_url, api_key, config = os.environ["ATS_GATEWAY_URL"], os.environ["DEFAULT_ARCADE_API_KEY"], os.environ.get("ATS_CONFIG", "ats.yaml")
-    config_path = Path(config).expanduser()
-    if not config_path.is_absolute():
-        config_path = REPO_ROOT / config_path
+    name = role_name()
+    roles = TypeAdapter(dict[str, Role]).validate_json(os.environ["ATS_ROLES"])
+    if name not in roles:
+        raise SystemExit(f"ATS_ROLE={name!r} is not in ATS_ROLES in .env (roles: {', '.join(roles)})")
+    role = roles[name]
     return Settings(
-        gateway_url=gateway_url,
-        api_key=api_key,
+        role=name,
+        project_id=role.project_id,
+        api_key=role.api_key,
+        gateway_url=role.gateway_url,
+        gateway_id=role.gateway_id,
+        org_id=os.environ["ARCADE_ORG_ID"],
         user_id=os.environ["ARCADE_USER_ID"],
-        config=ProjectConfig.model_validate(yaml.safe_load(config_path.read_text())),
+        openai_api_key=os.environ["OPENAI_API_KEY"],
         data_dir=data_dir(),
         otel=bool(os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT") or os.environ.get("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")),
     )

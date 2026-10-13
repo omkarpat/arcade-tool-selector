@@ -9,12 +9,12 @@ plus a threshold sweep over the recorded probabilities.
 
 import argparse
 import json
+import os
 import statistics
+import sys
 import time
 from datetime import datetime, timedelta
-import sys
 from pathlib import Path
-from typing import Literal
 
 import anyio
 import yaml
@@ -31,8 +31,7 @@ HERE = Path(__file__).parent
 
 class Project(BaseModel):
     prompt: str
-    scope: ScopeConfig = ScopeConfig()
-    on_low_scope: dict[Tier, Literal["ask", "deny"]] = PolicyConfig().on_low_scope
+    org_domains: list[str] = []  # who counts as inside the organization (production: the user's email domain)
 
 
 class Call(BaseModel):
@@ -73,9 +72,9 @@ def blocked(action: Action) -> bool:
 
 
 def make_vetters(catalog: Catalog, projects: dict[str, Project]) -> dict[str, Vetter]:
-    judge = DecisionsJudge()
+    judge = DecisionsJudge(os.environ["OPENAI_API_KEY"])
     return {
-        name: Vetter(p.scope, PolicyConfig(on_low_scope=p.on_low_scope), build_cards(catalog), judge)
+        name: Vetter(ScopeConfig(org_domains=p.org_domains), PolicyConfig(), build_cards(catalog), judge)
         for name, p in projects.items()
     }
 
@@ -85,7 +84,7 @@ async def run(vetters: dict[str, Vetter], projects: dict[str, Project], cases: l
 
     async def one(i: int, case: Case) -> None:
         vetter = vetters[case.project]
-        evidence = Evidence(project_prompt=projects[case.project].prompt, user_messages=case.user)
+        evidence = Evidence(purpose=projects[case.project].prompt, user_messages=case.user)
         started = time.monotonic()
         decision = await vetter.vet(case.call.tool, case.call.args, evidence)
         outcomes[i] = Outcome(case=case, decision=decision, tier=decision.tier or vetter.cards[case.call.tool].tier, seconds=time.monotonic() - started)
