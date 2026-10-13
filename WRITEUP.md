@@ -71,4 +71,4 @@ The biggest piece left is prompt-time tool selection, so the model only sees the
 
 **Where it leads.** Start with context on calls and customer-hosted hooks. The end state is Arcade running a small purpose classifier inside the gateway, so customers get the protection without hosting anything, and every broad grant comes with a purpose-shaped hedge by default.
 
-## Seperately I'd ask the arcade team to expand it API offerings and make the mcp more extensible. I had to write more custom code because the API primitives weren't available in the native arcade apis e.g. to dynamically switch gateways.
+## Seperately I'd ask the arcade team to expand it's API offerings and make the mcp more extensible. I had to write more custom code because the API primitives weren't available in the native arcade apis e.g. to dynamically switch gateways.
