@@ -1,4 +1,4 @@
-"""`ats-doctor`: check a setup end to end and say what to fix."""
+"""`ats-doctor`: check a setup end to end and say what to fix. Claude Code needs 2.1.295+ for hooks' onFailure."""
 
 import re
 import shutil
@@ -6,36 +6,25 @@ import subprocess
 import sys
 
 import anyio
-from mcp.client.session import ClientSession
-from mcp.client.streamable_http import streamable_http_client
-from mcp.shared._httpx_utils import create_mcp_http_client
 
+from arcade_tool_selector import gateway
 from arcade_tool_selector.judge import DecisionsJudge
 from arcade_tool_selector.platform import read_purpose
-from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import load_settings
 
-MIN_CLAUDE_CODE = (2, 1, 295)  # hooks' onFailure
+MIN_CLAUDE_CODE = (2, 1, 295)
 problems = 0
 
 
 def report(ok: bool, what: str, fix: str = "") -> None:
+    """Print one check, with the fix when it failed, and count the failures."""
     global problems
     problems += not ok
     print(f"{'✓' if ok else '✗'} {what}" + (f"\n    → {fix}" if fix and not ok else ""))
 
 
-async def list_gateway(url: str, headers: dict) -> int:
-    async with (
-        create_mcp_http_client(headers=headers) as http,
-        streamable_http_client(url, http_client=http) as (read, write),
-        ClientSession(read, write) as session,
-    ):
-        await session.initialize()
-        return len(await Upstream._list_all(session))
-
-
 async def judge_error(api_key: str) -> str | None:
+    """Ask the judge one trivial question; the error, if it can't answer."""
     try:
         await DecisionsJudge(api_key).predicates("The sky is blue.", {"blue": "Does the input say the sky is blue?"})
     except Exception as e:
@@ -44,6 +33,7 @@ async def judge_error(api_key: str) -> str | None:
 
 
 async def check() -> None:
+    """Check .env, the gateway, its purpose, the judge and Claude Code, in that order."""
     try:
         settings = load_settings()
     except (KeyError, SystemExit, ValueError) as e:
@@ -51,9 +41,8 @@ async def check() -> None:
         return
     report(True, f"role {settings.role!r} loads from .env (project {settings.project_id[:8]}…)")
 
-    upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, None)
     try:
-        tools = await list_gateway(settings.gateway_url, upstream.headers)
+        tools = len(await gateway.list_tools(settings))
         report(tools > 0, f"gateway answers with {tools} tools", "add tools to the gateway in the Arcade dashboard")
     except Exception as e:
         hint = "set the gateway's authentication to Arcade Headers, and use this project's own API key" if "40" in str(e) or "auth" in str(e).lower() else str(e)[:200]
@@ -78,6 +67,7 @@ async def check() -> None:
 
 
 def main() -> None:
+    """`ats-doctor` entry point: exits 1 when anything needs fixing."""
     anyio.run(check)
     print("\nAll good." if not problems else f"\n{problems} problem(s).")
     sys.exit(1 if problems else 0)

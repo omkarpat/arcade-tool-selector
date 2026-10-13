@@ -37,9 +37,9 @@ Nothing built in selects tools based on the prompt.
 
 ### Claude Code integration *(built)*
 
-A local MCP proxy sits in front of the gateway and is the only thing that talks to Arcade. Two Claude Code hooks feed it. When you send a prompt, a hook passes it to the proxy as the evidence future calls are judged against. When the model makes a call, another hook asks the proxy for a verdict. "Deny" refuses the call, and "ask" becomes Claude Code's own permission prompt with the reason attached. "Allow" stays silent, so Claude Code's normal rules still apply. The proxy also re-checks every call itself, so nothing slips past if a hook is skipped.
+A local MCP proxy sits in front of the gateway and is the only thing that talks to Arcade. Two Claude Code hooks feed it. When you send a prompt, a hook passes it to the proxy as the evidence future calls are judged against. When the model makes a call, another hook asks the proxy for a verdict. "Deny" refuses the call, and "ask" becomes Claude Code's own permission prompt with the reason attached. "Allow" stays silent, so Claude Code's normal rules still apply. The proxy runs only calls the hook vetted and didn't deny, so a call that skips the hook never reaches Arcade.
 
-The hooks and the proxy find each other through a local socket tied to the Claude Code process. The repo itself is a ready Claude Code project. It registers the proxy, adds the hooks, and turns off claude.ai connectors so the gateway is the only route to your apps.
+The hooks and the proxy find each other through a local socket named after the Claude Code process: the proxy is its direct child, and its hooks get its pid as `CLAUDE_PID`. The repo itself is a ready Claude Code project. It registers the proxy, adds the hooks, and turns off claude.ai connectors so the gateway is the only route to your apps.
 
 API keys stay in the repo's `.env`, which only the proxy reads. Claude Code's own config would store them in plain text.
 
@@ -69,9 +69,9 @@ Risk sets the consequence. An out-of-scope read or write asks the user, and an o
 
 The audit log records the decisions and reasons, plus a key that links each executed call to Arcade's own history, rather than duplicating it.
 
-### Catalog cache *(built)*
+### Tools and purpose *(built)*
 
-The proxy keeps every page of the gateway's tool list cached on disk, so startup is fast and a gateway outage doesn't empty the tool list. It refreshes every 15 minutes. One proxy per gateway does the polling, and the others pick up the result. When the catalog changes, Claude Code is told to reload its tools.
+The proxy reads every page of the gateway's tool list, and the purpose, at startup and every 15 minutes. When the tools change, Claude Code is told to reload them. If a refresh fails, every call is refused until the next one succeeds.
 
 ### Prompt-time selection *(planned, phase 4)*
 
@@ -110,7 +110,7 @@ A `request_more_tools` escape hatch lets the model ask for more when the set fal
 
 | # | What | Status |
 |---|---|---|
-| 1 | Pass-through proxy, catalog cache, hook-to-proxy link, audit | done |
+| 1 | Pass-through proxy, hook-to-proxy link, audit | done |
 | 2 | Tool cards, risk levels, selection baselines | done |
 | 3 | Per-call scope vetting and the scope eval | done |
 | 4 | Prompt-time selection | next: must beat keyword search at the same set size |

@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ATS_ROLE=workspace-search uv run --project \"$ATS_HOME\" ats-hook user-prompt-submit",
+            "command": "ATS_ROLE=workspace-search \"$ATS_HOME/.venv/bin/ats-hook\" user-prompt-submit",
             "timeout": 10
           }
         ]
@@ -17,21 +17,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "ATS_ROLE=workspace-search uv run --project \"$ATS_HOME\" ats-hook pre-tool-use",
+            "command": "ATS_ROLE=workspace-search \"$ATS_HOME/.venv/bin/ats-hook\" pre-tool-use",
             "timeout": 30,
             "onFailure": "block"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "mcp__workspace-search__.*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ATS_ROLE=workspace-search uv run --project \"$ATS_HOME\" ats-hook post-tool-use",
-            "timeout": 10
           }
         ]
       }

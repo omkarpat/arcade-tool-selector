@@ -2,6 +2,8 @@
 
 Built from the gateway's tools/list alone: Arcade attaches its own metadata under `_meta.arcade`
 (operations, read_only/destructive flags, service domain, OAuth requirements).
+
+Tiers: read, write and destructive come from Arcade's metadata; send is judged per call (policy.py).
 """
 
 import re
@@ -12,19 +14,27 @@ from pydantic import BaseModel
 
 from arcade_tool_selector.catalog import Catalog
 
-# read / write / destructive come from Arcade's metadata; "send" is judged per call (policy.py).
 Tier = Literal["read", "write", "send", "destructive"]
 
 
 class Param(BaseModel):
+    """One input parameter of a tool."""
+
     name: str
     description: str = ""
     required: bool
 
 
 class ToolCard(BaseModel):
-    name: str  # gateway name, e.g. Gmail_SendEmail
-    qualified_name: str  # Arcade name, e.g. Gmail.SendEmail
+    """What the selector and vetter know about one gateway tool.
+
+    name: the gateway name, e.g. Gmail_SendEmail.
+    qualified_name: the Arcade name, e.g. Gmail.SendEmail.
+    tier: None when Arcade gave no behavior metadata.
+    """
+
+    name: str
+    qualified_name: str
     toolkit: str
     description: str
     params: list[Param]
@@ -32,7 +42,7 @@ class ToolCard(BaseModel):
     domains: list[str]
     auth_provider: str | None
     scopes: list[str]
-    tier: Tier | None  # None: Arcade gave no behavior metadata
+    tier: Tier | None
 
     def text(self) -> str:
         """Searchable text: name words, description, parameter names and descriptions."""
@@ -46,6 +56,7 @@ def split_words(text: str) -> str:
 
 
 def card_for(tool: types.Tool) -> ToolCard:
+    """A tool's card, from its tools/list entry and Arcade's `_meta.arcade`."""
     arcade = (tool.meta or {}).get("arcade", {})
     behavior = arcade.get("metadata", {}).get("behavior")
     auth = arcade.get("requirements", {}).get("authorization") or {}
@@ -69,6 +80,7 @@ def card_for(tool: types.Tool) -> ToolCard:
 
 
 def _tier(behavior: dict | None) -> Tier | None:
+    """The tier Arcade's behavior flags imply: destructive, read or write."""
     if behavior is None:
         return None
     if behavior["destructive"]:
@@ -77,4 +89,5 @@ def _tier(behavior: dict | None) -> Tier | None:
 
 
 def build_cards(catalog: Catalog) -> list[ToolCard]:
+    """A card for every tool in the catalog."""
     return [card_for(tool) for tool in catalog.tools]

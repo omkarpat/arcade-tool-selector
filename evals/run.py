@@ -27,6 +27,8 @@ HERE = Path(__file__).parent
 
 
 class Case(BaseModel):
+    """A prompt, the tool groups it needs (any tool in a group covers it), and tools that are acceptable extras."""
+
     prompt: str
     needs: list[list[str]]
     ok: list[str] = []
@@ -34,6 +36,8 @@ class Case(BaseModel):
 
 
 class Score(BaseModel):
+    """One selector's metrics over the dataset."""
+
     selector: str
     recall: float
     solved: float
@@ -47,6 +51,7 @@ Selector = Callable[[str], list[str]]
 
 
 def score(name: str, select: Selector, cases: list[Case], tokens_per_tool: dict[str, int]) -> Score:
+    """Run a selector over every case and average its metrics."""
     recalls, solved, precisions, sizes, none_sizes, tokens = [], [], [], [], [], []
     for case in cases:
         picked = select(case.prompt)
@@ -72,6 +77,7 @@ def score(name: str, select: Selector, cases: list[Case], tokens_per_tool: dict[
 
 
 def main() -> None:
+    """Check the dataset against the catalog, then score 'all tools' and BM25 at several k."""
     catalog_path = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "catalogs" / "workspace.json"
     dataset_path = Path(sys.argv[2]) if len(sys.argv) > 2 else HERE / "datasets" / "tool_selection.yaml"
     catalog = Catalog.model_validate_json(catalog_path.read_text())
