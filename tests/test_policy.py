@@ -89,3 +89,11 @@ def test_disclosure_denies_only_calls_that_reach_people_in_protected_projects():
 def test_judge_down_fails_closed_except_read():
     assert vet(Judge(fail=True), "GoogleCalendar_CreateEvent").action == "deny"
     assert vet(Judge(fail=True), "GoogleCalendar_ListEvents").action == "ask"
+
+
+def test_no_purpose_denies_every_call_without_asking_the_judge():
+    judge = Judge()
+    vetter = Vetter(ScopeConfig(), PolicyConfig(), build_cards(CATALOG), judge)
+    decision = anyio.run(vetter.vet, "GoogleCalendar_ListEvents", {}, Evidence(project_prompt="  ", user_messages=["hi"]))
+    assert (decision.action, decision.check) == ("deny", "no_purpose")
+    assert judge.asked == []

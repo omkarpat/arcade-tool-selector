@@ -4,7 +4,7 @@
 
 I run Claude Code all day against an [Arcade](https://arcade.dev) MCP gateway connected to my Gmail, Calendar, Drive, Docs, Linear and Slack: 166 tools behind broad OAuth grants. A given project needs only a slice of that. A meeting scheduler should read my calendar, not send email. A support bot may reply to customers, but never forward an invoice to an address it read in an email. Arcade's controls are per tool and per user, but the line I care about is per call and per purpose. This repo draws that line.
 
-A local MCP proxy sits between Claude Code and the gateway. Every tool call is judged, before Arcade runs it, against the project's purpose (`project_prompt`) and what you actually asked for. The judge is OpenAI's Decisions API. Out-of-scope calls are denied or held for your approval in Claude Code's own permission prompt.
+A local MCP proxy sits between Claude Code and the gateway. Every tool call is judged, before Arcade runs it, against the project's purpose (the gateway's instructions in the Arcade dashboard) and what you actually asked for. The judge is OpenAI's Decisions API. Out-of-scope calls are denied or held for your approval in Claude Code's own permission prompt.
 
 This is a proof of concept on both axes:
 - **Placement.** The check belongs inside Arcade's gateway, as a hedge against the broad scopes humans grant. It runs locally here only because I can't change the gateway.
@@ -30,6 +30,7 @@ Claude Code ──stdio──► ats-proxy ────────────�
 **1. Create an MCP gateway** in the Arcade dashboard (your project → **MCP Gateways** → **Create**):
 - **Allowed Tools:** include Google Calendar, Gmail and Linear for the demo. The evals also use Drive, Docs, Sheets, Slides and Slack.
 - **Authentication:** **Arcade Headers**. The proxy sends your API key and an `Arcade-User-ID`.
+- **Instructions:** the project's purpose. This is the only place it lives. For the demo, paste the meeting-scheduler purpose from [`examples/roles/README.md`](examples/roles/README.md). Without instructions, every call is denied.
 
 **2. Clone and configure:**
 
@@ -37,7 +38,7 @@ Claude Code ──stdio──► ats-proxy ────────────�
 git clone https://github.com/omkarpat/arcade-tool-selector && cd arcade-tool-selector
 uv sync
 cp .env.example .env && chmod 600 .env        # fill in the values below
-cp examples/claude-code/ats.yaml ats.yaml     # the project config; edit project_prompt later
+cp examples/roles/meeting-scheduler.yaml ats.yaml   # the demo role's config (scope and policy; set org_domains)
 ```
 
 | `.env` | Where it comes from |
@@ -51,8 +52,8 @@ cp examples/claude-code/ats.yaml ats.yaml     # the project config; edit project
 **3. Check the setup, then run the demo:**
 
 ```sh
-uv run ats-doctor     # env, config, gateway auth, judge access, Claude Code version: what to fix if anything
-uv run ats-demo       # a meeting-scheduler project replays 7 requests through the real proxy, vetter and Arcade
+uv run ats-doctor     # env, config, gateway auth and purpose, judge access, Claude Code version: what to fix
+uv run ats-demo       # the meeting-scheduler role replays 7 requests through the real proxy, vetter and Arcade
 ```
 
 The demo sends the proxy exactly what Claude Code's hooks would send. It only executes calls that are allowed **and** read-only, so it never sends, changes or deletes anything. The first time Arcade needs a tool authorized (e.g. Google Calendar), the result is an authorization link. Open it once, then rerun.
@@ -90,7 +91,7 @@ Claude Code v2.1.295 or later is required.
 2. **Add the hooks** from [`examples/claude-code/settings.json`](examples/claude-code/settings.json) to `~/.claude/settings.json` or `.claude/settings.json`:
    - Replace `$ATS_HOME` with this repo's path.
    - Make sure the matcher uses your server name (`mcp__<server_name>__.*`).
-3. **Describe the project.** Edit `project_prompt` in `ats.yaml` to say what this project does, and what it doesn't: apps, actions, people and destinations. The description is the policy; there are no tool lists to maintain.
+3. **Describe the project** in the gateway's **Instructions** in the Arcade dashboard: what this project does, and what it doesn't (apps, actions, people and destinations). That text is the policy, and it lives nowhere else. There are no tool lists to maintain.
 4. **Restart Claude Code and work as usual.** An out-of-scope call comes back refused, with the reason. A destructive or doubtful call shows Claude Code's permission prompt, with the vetter's reason.
 
 | Hook | What it does |
@@ -103,7 +104,7 @@ Claude Code v2.1.295 or later is required.
 
 ## How a call is decided
 
-The project description is the policy, and it lives in Arcade: write it into the gateway's **instructions** in the dashboard. The proxy reads it when it connects. Only the vetter sees it; the agent deliberately doesn't, so the vetter is what keeps calls in scope, not the agent's own restraint. `project_prompt` in `ats.yaml` overrides it, which is useful for tests, demos, or several purposes on one gateway.
+The project description is the policy, and it lives in Arcade: write it into the gateway's **instructions** in the dashboard. The proxy reads it when it connects. Only the vetter sees it; the agent deliberately doesn't, so the vetter is what keeps calls in scope, not the agent's own restraint. It has exactly one home: there's no local override. A gateway without instructions fails loudly, and every call is denied with that reason.
 
 Which tools a project can reach at all is Arcade's job: its gateway's allow-list and project-scoped API keys. Each call is judged by one Decisions API request with up to four questions:
 - **`within_purpose`:** does the project's purpose cover this action, with these arguments?

@@ -68,17 +68,19 @@ Duration = Annotated[float, BeforeValidator(parse_duration)]
 
 
 class CatalogConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     refresh_interval: Duration = 15 * 60
     max_staleness: Duration = 24 * 3600
 
 
 class ProjectConfig(BaseModel):
-    # Selection and judge keys belong to later phases.
-    model_config = ConfigDict(extra="allow")
+    """ats.yaml. The project's purpose is not here: it lives only in the Arcade gateway's instructions."""
+
+    model_config = ConfigDict(extra="forbid")  # an unknown or leftover key fails loudly instead of being ignored
 
     project: str
     server_name: str
-    project_prompt: str | None = None  # overrides the gateway's instructions (tests, demos, several purposes on one gateway)
     catalog: CatalogConfig = CatalogConfig()
     scope: ScopeConfig = ScopeConfig()
     policy: PolicyConfig = PolicyConfig()

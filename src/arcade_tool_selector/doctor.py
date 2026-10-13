@@ -12,7 +12,7 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 from arcade_tool_selector.judge import DecisionsJudge
-from arcade_tool_selector.proxy.upstream import Upstream
+from arcade_tool_selector.proxy.upstream import Upstream, gateway_purpose
 from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
 MIN_CLAUDE_CODE = (2, 1, 295)  # hooks' onFailure
@@ -25,14 +25,15 @@ def report(ok: bool, what: str, fix: str = "") -> None:
     print(f"{'✓' if ok else '✗'} {what}" + (f"\n    → {fix}" if fix and not ok else ""))
 
 
-async def list_gateway(url: str, headers: dict) -> int:
+async def list_gateway(url: str, headers: dict) -> tuple[int, str]:
+    """(tool count, the gateway's purpose)."""
     async with (
         create_mcp_http_client(headers=headers) as http,
         streamable_http_client(url, http_client=http) as (read, write),
         ClientSession(read, write) as session,
     ):
-        await session.initialize()
-        return len(await Upstream._list_all(session))
+        purpose = gateway_purpose((await session.initialize()).instructions or "")
+        return len(await Upstream._list_all(session)), purpose
 
 
 async def judge_error() -> str | None:
@@ -61,8 +62,9 @@ async def check() -> None:
 
     upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, None)
     try:
-        tools = await list_gateway(settings.gateway_url, upstream.headers)
+        tools, purpose = await list_gateway(settings.gateway_url, upstream.headers)
         report(tools > 0, f"gateway answers with {tools} tools", "add tools to the gateway in the Arcade dashboard")
+        report(bool(purpose), f"gateway has a purpose: {purpose[:60]}…" if purpose else "gateway has no purpose", "write the project's purpose into the gateway's instructions in the Arcade dashboard; until then every call is denied")
     except Exception as e:
         hint = "set the gateway's authentication to Arcade Headers" if "401" in str(e) or "auth" in str(e).lower() else str(e)[:200]
         report(False, "gateway rejected the connection", hint)

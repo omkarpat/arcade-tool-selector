@@ -1,12 +1,8 @@
 # Role: meeting scheduler. Arcade project "Meeting Scheduler".
 # Gateway: Google Calendar + Gmail read + Gmail reply/draft-reply. No Linear tools exist on it at all.
-# Everything else is the description, judged per call.
+# Its purpose is the gateway's instructions in the Arcade dashboard (text: README.md here).
 project: meeting-scheduler
 server_name: meeting-scheduler
-project_prompt: >                         # optional: overrides the gateway's instructions (Arcade dashboard)
-  Meeting scheduler. Reads the user's calendar, finds free time, and creates, moves or cancels events. Reads
-  email to find scheduling requests and replies only to emails about meetings. It only invites people inside
-  the organization. It does not send other email, share files, or use any other app.
 
 scope:
   org_domains: [example.com]              # your organization's email domains

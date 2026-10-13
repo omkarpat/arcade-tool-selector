@@ -22,7 +22,7 @@ def test_role_file_overlays_repo_env_and_can_reference_it(tmp_path, monkeypatch)
 def test_role_from_the_roles_dict(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     (repo / "roles").mkdir(parents=True)
-    (repo / "roles" / "support-bot.yaml").write_text("project: support-bot\nserver_name: support-bot\nproject_prompt: Support.\n")
+    (repo / "roles" / "support-bot.yaml").write_text("project: support-bot\nserver_name: support-bot\n")
     (repo / ".env").write_text(
         "DEFAULT_ARCADE_API_KEY=arc_workspace\nATS_GATEWAY_URL=https://api.arcade.dev/mcp/gw_workspace\nARCADE_USER_ID=me@acme.com\n"
         'ATS_ROLES=\'{"support-bot": {"project_id": "7d77", "api_key": "arc_support", '

@@ -184,12 +184,8 @@ Every policy change can be replayed against this log to see what it would have b
 ### 4.7 Project config (sketch)
 
 ```yaml
-project: support-bot
-project_prompt: >
-  Customer support agent. Reads customer emails and replies to customers in the threads they started, about
-  their own issue. Files and updates support tickets in the Linear team SUP only, and posts updates in the
-  #support Slack channel only. Never deletes or trashes email.
-scope:                                          # judged per call against project_prompt (§4.10)
+project: support-bot                            # the purpose itself is the gateway's instructions (Arcade dashboard)
+scope:                                          # judged per call against the gateway's instructions (§4.10)
   threshold: 0.85                               # purpose and requested must both reach this
   org_domains: [example.com]                    # who counts as inside the organization
   protect_internal: true                        # calls that reach people must not reveal internal details
@@ -249,7 +245,7 @@ Verified in phase 1 with a real `claude -p` session. Without a `claude` ancestor
 - operations, `read_only` / `destructive` flags and service domain
 - the OAuth provider and scopes
 
-**Two boundaries.** The gateway's Allowed Tools, plus the OAuth grants behind them, bound what the **user** can reach. The project's purpose bounds what **this project** may do, which is usually far less. That bound is judged per prompt and per call against `project_prompt` by the Decisions API (§4.10). The proxy lists only tools the current request needs within that purpose, and the vetter judges every call. Several projects can share one gateway and one set of grants, each with its own `ats.yaml`.
+**Two boundaries.** The gateway's Allowed Tools, plus the OAuth grants behind them, bound what the **user** can reach. The project's purpose bounds what **this project** may do, which is usually far less. That bound is the gateway's instructions in the Arcade dashboard (its only home), judged per prompt and per call by the Decisions API (§4.10). The proxy lists only tools the current request needs within that purpose, and the vetter judges every call. Several projects can share one gateway and one set of grants, each with its own `ats.yaml`.
 
 **Example config.** The `workspace-search` cut-over is in [`examples/claude-code/`](examples/claude-code/):
 - `mcp.before.json` → `mcp.json` (direct gateway → proxy)
@@ -318,7 +314,7 @@ A project's scope can't be a fixed list. The same tool can be in scope for one c
 - `Gmail_SendEmail` replying to a customer who wrote in: in scope.
 - `Gmail_SendEmail` sending the same thread to an outside address: out of scope.
 
-So scope is a **Decisions API judgment** against the project's purpose (`project_prompt`), made at two points.
+So scope is a **Decisions API judgment** against the project's purpose (the gateway's instructions), made at two points.
 
 **1. Per prompt, at selection** (`UserPromptSubmit`). The batched gate (§4.1 step 4) asks two predicates per shortlisted tool in the same call:
 - *relevant:* would this request need `<tool>`?
@@ -419,7 +415,7 @@ The stack is Python 3.11+ and `arcadepy`, with `uv` for packaging and an MIT lic
 | **Claude Code** | | |
 | 1 | Pass-through proxy: stdio MCP → test Arcade gateway (Arcade Headers auth), forwards `tools/list`/`tools/call`, audit log; catalog cache with startup load, background poll, shared lease and diff (§4.9); socket-correlation spike with a no-op `UserPromptSubmit` hook | Swapped in for a gateway entry, Claude Code behaves exactly as with the direct connection; warm start serves all 166 tools from cache; a tool added on the gateway appears within one poll; hook reaches the right proxy |
 | 2 | Catalog + `ToolCard` + risk tiers (auto-label + overrides) + eval dataset v0 + harness with "all tools" and BM25-only baselines | `evals/run.py` reports recall/precision/size on the test gateway's catalog |
-| 3 | **Per-call scope vetting.** Judge interface and Decisions API adapter. The vetter runs in `PreToolUse` with a proxy re-check: a per-call scope judgment against `project_prompt` (no tool lists or argument rules), with tier-driven `on_low_scope` (ask via Claude Code's prompt, or deny) and fail-closed. Also the scope eval slice | Scope slice: 100% of out-of-scope calls blocked at both enforcement points; false-block rate reported; threshold sweep sets the defaults |
+| 3 | **Per-call scope vetting.** Judge interface and Decisions API adapter. The vetter runs in `PreToolUse` with a proxy re-check: a per-call scope judgment against the gateway's instructions (no tool lists or argument rules), with tier-driven `on_low_scope` (ask via Claude Code's prompt, or deny) and fail-closed. Also the scope eval slice | Scope slice: 100% of out-of-scope calls blocked at both enforcement points; false-block rate reported; threshold sweep sets the defaults |
 | 4 | Selector v1: batched per-prompt gate on the phase 3 judge (relevant + in-scope predicates per tool) + select rules; `UserPromptSubmit` → proxy `list_changed`; `additionalContext`; in-selection check | Model only sees selected tools; gate beats BM25 on recall at equal set size; p95 < 3s |
 | 5 | `request_more_tools`, sticky selections, unused-grants report from the audit log | Multi-turn + injection eval slices pass; report on the workspace gateway |
 | 6 | Plugin packaging (userConfig, marketplace), `/ats-why`, docs; cut `workspace-search` over | Installs from the repo with one command; daily use on the real gateway |

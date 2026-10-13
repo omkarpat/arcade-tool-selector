@@ -1,18 +1,13 @@
 # Project config for a workspace-search gateway (Gmail, Calendar, Drive, Linear, Slack).
-# The gateway decides which tools exist; project_prompt is the policy every call is judged against.
+# The gateway decides which tools exist; its instructions (Arcade dashboard) are the policy every call is judged against.
 project: workspace-search
 server_name: workspace-search            # must match the MCP server name in Claude Code
-
-project_prompt: >                         # optional: overrides the gateway's instructions (Arcade dashboard)
-  Personal work assistant. Reads email, calendar, Drive files, Linear issues and Slack. Files and updates
-  Linear issues for my teams. Never deletes or archives anything, and never sends anything outside the
-  company.
 
 catalog:
   refresh_interval: 15m                   # poll the gateway's tools/list; 0 = startup only
   max_staleness: 24h
 
-scope:                                    # judged per call against project_prompt (PLAN §4.10)
+scope:                                    # judged per call against the gateway's instructions (PLAN §4.10)
   threshold: 0.85                         # both scope answers (purpose, requested) must reach this
   org_domains: [example.com]              # who counts as inside the organization
   protect_internal: false                 # true: calls that reach people must not reveal internal details

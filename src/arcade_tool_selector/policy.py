@@ -13,7 +13,7 @@ import json
 from datetime import datetime
 from typing import Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 from arcade_tool_selector.cards import Tier, ToolCard
 
@@ -63,6 +63,8 @@ SEND_FROM = 0.5
 
 
 class ScopeConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     threshold: float = 0.85  # purpose and requested must both reach this; lower answers ask or deny
     disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     org_domains: list[str] = []  # who counts as inside the organization
@@ -70,6 +72,8 @@ class ScopeConfig(BaseModel):
 
 
 class PolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     approve: list[Tier] = ["destructive"]  # in-scope calls in these tiers still ask the user
     on_low_scope: dict[Tier, Literal["ask", "deny"]] = {"read": "ask", "write": "ask", "send": "deny", "destructive": "deny"}
 
@@ -81,7 +85,7 @@ class Evidence(BaseModel):
 
 class Decision(BaseModel):
     action: Action
-    check: Literal["unknown_tool", "disclosure", "scope", "judge_unavailable", "approval", "in_scope"]
+    check: Literal["no_purpose", "unknown_tool", "disclosure", "scope", "judge_unavailable", "approval", "in_scope"]
     reason: str
     tier: Tier | None = None  # the call's stakes: Arcade's tier, or send when it reaches people
     probability: float | None = None  # the deciding (lowest) scope answer
@@ -100,6 +104,8 @@ class Vetter:
         self.judge = judge
 
     async def vet(self, tool: str, arguments: dict, evidence: Evidence) -> Decision:
+        if not evidence.project_prompt.strip():
+            return Decision(action="deny", check="no_purpose", reason="This project has no purpose: write it into the gateway's instructions in the Arcade dashboard.")
         card = self.cards.get(tool)
         if card is None:
             return Decision(action="deny", check="unknown_tool", reason=f"{tool} is not a tool on this gateway.")

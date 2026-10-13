@@ -98,8 +98,10 @@ class Proxy:
         return Vetter(config.scope, config.policy, build_cards(self.catalog), self.judge)
 
     async def _evidence(self, session_id: str | None) -> Evidence:
-        # The purpose lives in the gateway's instructions (Arcade dashboard); the agent never sees it, only the vetter.
-        purpose = self.settings.config.project_prompt or await self.upstream.gateway_purpose()
+        # The purpose lives only in the gateway's instructions (Arcade dashboard); only the vetter sees it.
+        purpose = await self.upstream.gateway_purpose()
+        if not purpose:
+            logger.error("gateway has no instructions: every call is denied until the project's purpose is set in the Arcade dashboard")
         return Evidence(project_prompt=purpose, user_messages=self.prompts.get(session_id, []))
 
     async def vet(self, tool: str, arguments: dict, session_id: str | None, via: str) -> Decision:

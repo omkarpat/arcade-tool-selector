@@ -23,31 +23,29 @@ def anyio_backend():
     return "asyncio"
 
 
-def proxy_params(data_dir, config=None) -> StdioServerParameters:
-    env = {**os.environ, "ATS_DATA_DIR": str(data_dir), **({"ATS_CONFIG": str(config)} if config else {})}
-    return StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=env)
+def role_env(data_dir, role: str | None) -> dict:
+    # The project config is the repo example; the purpose comes only from each gateway's instructions.
+    env = {**os.environ, "ATS_DATA_DIR": str(data_dir), "ATS_CONFIG": str(REPO_ROOT / "examples/claude-code/ats.yaml")}
+    return {**env, "ATS_ROLE": role} if role else env
 
 
-def hook(name: str, data_dir, event: dict) -> subprocess.CompletedProcess:
+def proxy_params(data_dir, role: str | None = None) -> StdioServerParameters:
+    return StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=role_env(data_dir, role))
+
+
+def hook(name: str, data_dir, event: dict, role: str | None = None) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["uv", "run", "--project", str(REPO_ROOT), "ats-hook", name],
         input=json.dumps(event),
-        env={**os.environ, "ATS_DATA_DIR": str(data_dir)},
+        env=role_env(data_dir, role),
         capture_output=True,
         text=True,
     )
 
 
-CALENDAR_PROJECT = (
-    "project: calendar-assistant\nserver_name: workspace-search\nproject_prompt: >\n"
-    "  Calendar assistant. Reads the user's calendar and their Google account details to answer questions.\n"
-)
-
-
 async def list_and_call(data_dir):
-    config = data_dir / "ats.yaml"
-    config.write_text(CALENDAR_PROJECT)
-    async with stdio_client(proxy_params(data_dir, config)) as (read, write), ClientSession(read, write) as session:
+    """The default gateway (Workspace Search: its purpose covers reading the user's calendar)."""
+    async with stdio_client(proxy_params(data_dir)) as (read, write), ClientSession(read, write) as session:
         started = time.monotonic()
         await session.initialize()
         tools = (await session.list_tools()).tools
@@ -97,6 +95,7 @@ async def test_shared_cache_change_reaches_client(tmp_path):
         await session.initialize()
         before = (await session.list_tools()).tools
 
+        os.environ["ATS_CONFIG"] = str(REPO_ROOT / "examples/claude-code/ats.yaml")
         store = CatalogStore(tmp_path, load_settings().gateway_key)
         store.save(Catalog.from_tools([t for t in before if t.name != "Linear_ArchiveIssue"]))
 
@@ -121,39 +120,35 @@ async def test_call_resolves_to_arcade_execution(tmp_path):
 
 
 async def test_scope_enforced_at_hook_and_proxy(tmp_path):
-    """A meeting-scheduler project on the broad workspace gateway: out-of-scope calls are stopped by the
+    """The meeting-scheduler role, its purpose read from its own gateway: out-of-scope calls are stopped by the
     PreToolUse hook, and by the proxy itself when the hook is bypassed."""
-    config = tmp_path / "ats.yaml"
-    config.write_text(
-        "project: meeting-scheduler\nserver_name: workspace-search\nproject_prompt: >\n"
-        "  Meeting scheduler. Reads the user's calendar and creates or moves events. It does not send email\n"
-        "  or use any other app.\n"
-    )
-    async with stdio_client(proxy_params(tmp_path, config)) as (read, write), ClientSession(read, write) as session:
+    role = "meeting-scheduler"
+    async with stdio_client(proxy_params(tmp_path, role)) as (read, write), ClientSession(read, write) as session:
         await session.initialize()
         await session.list_tools()
-        hook("user-prompt-submit", tmp_path, {"session_id": "s1", "prompt_id": "p1", "prompt": "What's on my calendar tomorrow?"})
+        hook("user-prompt-submit", tmp_path, {"session_id": "s1", "prompt_id": "p1", "prompt": "What's on my calendar tomorrow?"}, role)
 
-        # Hook: an out-of-scope send is denied before Claude Code runs it (never executed).
-        denied = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": "mcp__workspace-search__Gmail_SendEmail",
-                                                 "tool_input": {"recipient": "x@example.com", "subject": "hi", "body": "hi"}})
+        # Hook: an out-of-scope reply is denied before Claude Code runs it (never executed).
+        denied = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": f"mcp__{role}__Gmail_ReplyToEmail",
+                                                 "tool_input": {"reply_to_message_id": "msg_invoice", "body": "We'll pay the invoice next week."}}, role)
         decision = json.loads(denied.stdout)["hookSpecificOutput"]
         assert decision["permissionDecision"] == "deny", decision
 
         # Hook: an in-scope read says nothing (Claude Code's own rules apply), then runs through the proxy.
         args = {"min_end_datetime": "2026-10-13T00:00:00", "max_start_datetime": "2026-10-14T00:00:00"}
-        allowed = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": "mcp__workspace-search__GoogleCalendar_ListEvents", "tool_input": args})
+        allowed = hook("pre-tool-use", tmp_path, {"session_id": "s1", "tool_name": f"mcp__{role}__GoogleCalendar_ListEvents", "tool_input": args}, role)
         assert allowed.returncode == 0 and allowed.stdout == ""
         assert not (await session.call_tool("GoogleCalendar_ListEvents", args)).is_error
 
         # Proxy: a call that skipped the hook is vetted anyway (a read outside the purpose, so safe if it ran).
-        bypassed = await session.call_tool("Linear_ListIssues", {"limit": 1})
+        bypassed = await session.call_tool("Gmail_SearchThreads", {"body": ["invoice"]})
         assert bypassed.is_error and "Blocked by arcade-tool-selector" in bypassed.content[0].text
 
-    vetted = [json.loads(line) for line in (tmp_path / "audit.jsonl").read_text().splitlines() if '"vetted"' in line]
+    log = tmp_path / role / "audit.jsonl"
+    vetted = [json.loads(line) for line in log.read_text().splitlines() if '"vetted"' in line]
     print("\n".join(f"{v['via']:<5} {v['tool']:<26} {v['action']:<5} {v['check']:<9} {v['answers']}" for v in vetted))
     assert {(v["via"], v["tool"], v["action"]) for v in vetted} >= {
-        ("hook", "Gmail_SendEmail", "deny"),
+        ("hook", "Gmail_ReplyToEmail", "deny"),
         ("hook", "GoogleCalendar_ListEvents", "allow"),
-        ("proxy", "Linear_ListIssues", "ask"),
+        ("proxy", "Gmail_SearchThreads", "ask"),
     }
