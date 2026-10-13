@@ -13,7 +13,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from arcade_tool_selector.catalog import Catalog, CatalogStore
 from arcade_tool_selector.executions import ExecutionKey, find_execution
-from arcade_tool_selector.settings import REPO_ROOT, load_env, load_settings
+from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
 pytestmark = [pytest.mark.skipif(not os.environ.get("ATS_LIVE"), reason="set ATS_LIVE=1"), pytest.mark.anyio]
 
@@ -23,17 +23,19 @@ def anyio_backend():
     return "asyncio"
 
 
-def role_env(data_dir, role: str | None) -> dict:
-    # The project config is the repo example; the purpose comes only from each gateway's instructions.
-    env = {**os.environ, "ATS_DATA_DIR": str(data_dir), "ATS_CONFIG": str(REPO_ROOT / "examples/claude-code/ats.yaml")}
-    return {**env, "ATS_ROLE": role} if role else env
+DEFAULT_ROLE = "workspace-search"  # its gateway's purpose covers reading the user's calendar
 
 
-def proxy_params(data_dir, role: str | None = None) -> StdioServerParameters:
+def role_env(data_dir, role: str) -> dict:
+    # Everything comes from .env and the role's gateway; the data dir is isolated per test.
+    return {**os.environ, "ATS_DATA_DIR": str(data_dir), "ATS_ROLE": role}
+
+
+def proxy_params(data_dir, role: str = DEFAULT_ROLE) -> StdioServerParameters:
     return StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=role_env(data_dir, role))
 
 
-def hook(name: str, data_dir, event: dict, role: str | None = None) -> subprocess.CompletedProcess:
+def hook(name: str, data_dir, event: dict, role: str = DEFAULT_ROLE) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["uv", "run", "--project", str(REPO_ROOT), "ats-hook", name],
         input=json.dumps(event),
@@ -67,7 +69,7 @@ async def test_pass_through_cache_and_hook(tmp_path):
     assert unknown.is_error
 
     assert submitted.returncode == 0 and submitted.stdout == "", "the prompt hook adds nothing to Claude Code"
-    hook_log = (tmp_path / "hook.log").read_text().splitlines()[-1]
+    hook_log = (tmp_path / DEFAULT_ROLE / "hook.log").read_text().splitlines()[-1]
     print("hook:", hook_log)
     assert '\\"ok\\": true' in hook_log
 
@@ -75,7 +77,7 @@ async def test_pass_through_cache_and_hook(tmp_path):
     print(f"warm start: {len(tools_warm)} tools in {warm:.1f}s")
     assert {t.name for t in tools_warm} == names
 
-    events = [json.loads(line)["event"] for line in (tmp_path / "audit.jsonl").read_text().splitlines()]
+    events = [json.loads(line)["event"] for line in (tmp_path / DEFAULT_ROLE / "audit.jsonl").read_text().splitlines()]
     print("audit events:", events)
     assert {"catalog_changed", "call", "vetted", "prompt_seen"} <= set(events)
 
@@ -95,8 +97,8 @@ async def test_shared_cache_change_reaches_client(tmp_path):
         await session.initialize()
         before = (await session.list_tools()).tools
 
-        os.environ["ATS_CONFIG"] = str(REPO_ROOT / "examples/claude-code/ats.yaml")
-        store = CatalogStore(tmp_path, load_settings().gateway_key)
+        os.environ["ATS_ROLE"] = DEFAULT_ROLE
+        store = CatalogStore(tmp_path / DEFAULT_ROLE, load_settings().gateway_key)
         store.save(Catalog.from_tools([t for t in before if t.name != "Linear_ArchiveIssue"]))
 
         with anyio.fail_after(15):
@@ -108,11 +110,12 @@ async def test_shared_cache_change_reaches_client(tmp_path):
 async def test_call_resolves_to_arcade_execution(tmp_path):
     """A `call` audit event carries the keys to find Arcade's own record of the execution."""
     await list_and_call(tmp_path)
-    load_env()
-    call = next(e for e in map(json.loads, (tmp_path / "audit.jsonl").read_text().splitlines()) if e["event"] == "call")
+    os.environ.update({"ATS_ROLE": DEFAULT_ROLE, "ATS_DATA_DIR": str(tmp_path)})
+    settings = load_settings()
+    call = next(e for e in map(json.loads, (tmp_path / DEFAULT_ROLE / "audit.jsonl").read_text().splitlines()) if e["event"] == "call")
     key = ExecutionKey.model_validate(call)
     with anyio.fail_after(60):
-        while (execution := find_execution(key)) is None:  # Arcade's log lags the call by a few seconds
+        while (execution := find_execution(key, settings)) is None:  # Arcade's log lags the call by a few seconds
             await anyio.sleep(3)
     print("arcade execution:", execution.id, execution.execution_status)
     assert (execution.toolkit_name, execution.tool_name) == ("GoogleCalendar", "WhoAmI")

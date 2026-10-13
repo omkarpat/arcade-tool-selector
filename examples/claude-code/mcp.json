@@ -3,7 +3,15 @@
     "workspace-search": {
       "type": "stdio",
       "command": "uv",
-      "args": ["run", "--project", "${ATS_HOME}", "ats-proxy"]
+      "args": [
+        "run",
+        "--project",
+        "${ATS_HOME}",
+        "ats-proxy"
+      ],
+      "env": {
+        "ATS_ROLE": "workspace-search"
+      }
     }
   }
 }

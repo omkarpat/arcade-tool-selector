@@ -27,13 +27,15 @@ from arcade_tool_selector.catalog import Catalog, CatalogStore, diff
 from arcade_tool_selector.claude_code.runtime import HookMessage, PromptSubmitted, VetRequest, socket_path
 from arcade_tool_selector.executions import ExecutionKey
 from arcade_tool_selector.judge import DecisionsJudge
-from arcade_tool_selector.policy import Decision, Evidence, Vetter
+from arcade_tool_selector.platform import read_purpose
+from arcade_tool_selector.policy import Decision, Evidence, PolicyConfig, ScopeConfig, Vetter
 from arcade_tool_selector.proxy.upstream import Upstream
 from arcade_tool_selector.settings import Settings, load_settings
 
 logger = logging.getLogger("ats.proxy")
 
 WATCH_INTERVAL = 5
+REFRESH_INTERVAL = 15 * 60  # catalog and purpose re-read from the gateway
 JITTER = 0.1
 PROMPTS_KEPT = 20
 # How long a hook decision covers the matching call reaching the proxy (an `ask` waits on the user).
@@ -46,15 +48,15 @@ class Proxy:
         self.store = CatalogStore(settings.data_dir, settings.gateway_key)
         self.audit = Audit(settings.data_dir / "audit.jsonl", otel=settings.otel)
         self.upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, self._on_upstream_changed)
-        self.refresh_interval = settings.config.catalog.refresh_interval
-        self.max_staleness = settings.config.catalog.max_staleness
         self.catalog = Catalog.from_tools([])
         # stdio serves one client; it is notified once it has listed tools.
         self.session: ServerSession | None = None
         self._refresh_lock = anyio.Lock()
         self._seen_mtime: float | None = None
         self._tg: TaskGroup | None = None
-        self.judge = DecisionsJudge()
+        self.judge = DecisionsJudge(settings.openai_api_key)
+        # The project's purpose: its gateway's instructions on the Arcade platform. Only the vetter sees it.
+        self.purpose = ""
         self.vetter = self._vetter()
         # The user's own prompts per Claude Code session, and the session that spoke last.
         self.prompts: dict[str | None, list[str]] = {}
@@ -94,18 +96,24 @@ class Proxy:
     # Vetting
 
     def _vetter(self) -> Vetter:
-        config = self.settings.config
-        return Vetter(config.scope, config.policy, build_cards(self.catalog), self.judge)
+        return Vetter(ScopeConfig(org_domains=[self.settings.org_domain]), PolicyConfig(), build_cards(self.catalog), self.judge)
 
-    async def _evidence(self, session_id: str | None) -> Evidence:
-        # The purpose lives only in the gateway's instructions (Arcade dashboard); only the vetter sees it.
-        purpose = await self.upstream.gateway_purpose()
-        if not purpose:
-            logger.error("gateway has no instructions: every call is denied until the project's purpose is set in the Arcade dashboard")
-        return Evidence(project_prompt=purpose, user_messages=self.prompts.get(session_id, []))
+    async def _load_purpose(self) -> None:
+        """Re-read on every poll, so a dashboard edit applies within one refresh interval."""
+        try:
+            self.purpose = await anyio.to_thread.run_sync(read_purpose, self.settings)
+        except Exception:
+            logger.exception("could not read the project's purpose from the gateway; calls are denied until it can be")
+            self.purpose = ""
+            return
+        if not self.purpose:
+            logger.error("the gateway has no instructions: every call is denied until the project's purpose is set in the Arcade dashboard")
+
+    def _evidence(self, session_id: str | None) -> Evidence:
+        return Evidence(purpose=self.purpose, user_messages=self.prompts.get(session_id, []))
 
     async def vet(self, tool: str, arguments: dict, session_id: str | None, via: str) -> Decision:
-        decision = await self.vetter.vet(tool, arguments, await self._evidence(session_id))
+        decision = await self.vetter.vet(tool, arguments, self._evidence(session_id))
         self.audit.write("vetted", via=via, tool=tool, arg_keys=sorted(arguments), **decision.model_dump())
         return decision
 
@@ -127,6 +135,7 @@ class Proxy:
         async with anyio.create_task_group() as tg:
             self._tg = tg
             tg.start_soon(self.upstream.run)
+            await self._load_purpose()
             cached = self.store.load()
             if cached:
                 self.catalog = cached
@@ -167,14 +176,11 @@ class Proxy:
             await self.refresh(reason)
         except Exception:
             logger.exception("catalog refresh (%s) failed", reason)
-            if time.time() - self.catalog.fetched_at > self.max_staleness:
-                logger.warning("gateway unreachable and cache is older than %.0fs", self.max_staleness)
 
     async def _poll(self) -> None:
-        if not self.refresh_interval:
-            return
         while True:
-            await anyio.sleep(self.refresh_interval * random.uniform(1 - JITTER, 1 + JITTER))
+            await anyio.sleep(REFRESH_INTERVAL * random.uniform(1 - JITTER, 1 + JITTER))
+            await self._load_purpose()
             if self.store.acquire_lease(self._lease_ttl()):
                 await self._try_refresh("poll")
 
@@ -194,7 +200,7 @@ class Proxy:
         self._tg.start_soon(self._try_refresh, "upstream_list_changed")
 
     def _lease_ttl(self) -> float:
-        return 2 * (self.refresh_interval or 900)
+        return 2 * REFRESH_INTERVAL
 
     # Hook socket
 
@@ -268,7 +274,7 @@ async def serve() -> None:
         handlers=[logging.StreamHandler(), logging.FileHandler(settings.data_dir / "proxy.log")],
     )
     proxy = Proxy(settings)
-    server = Server(settings.config.server_name, lifespan=proxy.lifespan, on_list_tools=proxy.list_tools, on_call_tool=proxy.call_tool)
+    server = Server(settings.role, lifespan=proxy.lifespan, on_list_tools=proxy.list_tools, on_call_tool=proxy.call_tool)
     options = server.create_initialization_options(notification_options=NotificationOptions(tools_changed=True))
     async with stdio_server() as (read, write):
         await server.run(read, write, options)

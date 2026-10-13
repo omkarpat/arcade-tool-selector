@@ -1,6 +1,5 @@
 """`ats-doctor`: check a setup end to end and say what to fix."""
 
-import os
 import re
 import shutil
 import subprocess
@@ -12,8 +11,9 @@ from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 from arcade_tool_selector.judge import DecisionsJudge
-from arcade_tool_selector.proxy.upstream import Upstream, gateway_purpose
-from arcade_tool_selector.settings import REPO_ROOT, load_settings
+from arcade_tool_selector.platform import read_purpose
+from arcade_tool_selector.proxy.upstream import Upstream
+from arcade_tool_selector.settings import load_settings
 
 MIN_CLAUDE_CODE = (2, 1, 295)  # hooks' onFailure
 problems = 0
@@ -25,56 +25,52 @@ def report(ok: bool, what: str, fix: str = "") -> None:
     print(f"{'✓' if ok else '✗'} {what}" + (f"\n    → {fix}" if fix and not ok else ""))
 
 
-async def list_gateway(url: str, headers: dict) -> tuple[int, str]:
-    """(tool count, the gateway's purpose)."""
+async def list_gateway(url: str, headers: dict) -> int:
     async with (
         create_mcp_http_client(headers=headers) as http,
         streamable_http_client(url, http_client=http) as (read, write),
         ClientSession(read, write) as session,
     ):
-        purpose = gateway_purpose((await session.initialize()).instructions or "")
-        return len(await Upstream._list_all(session)), purpose
+        await session.initialize()
+        return len(await Upstream._list_all(session))
 
 
-async def judge_error() -> str | None:
+async def judge_error(api_key: str) -> str | None:
     try:
-        await DecisionsJudge().predicates("The sky is blue.", {"blue": "Does the input say the sky is blue?"})
+        await DecisionsJudge(api_key).predicates("The sky is blue.", {"blue": "Does the input say the sky is blue?"})
     except Exception as e:
         return str(e)[:200]
     return None
 
 
 async def check() -> None:
-    env_file = os.environ.get("ATS_ENV_FILE", str(REPO_ROOT / ".env"))
     try:
         settings = load_settings()
-    except KeyError as e:
-        report(False, f"environment: {e.args[0]} is not set", f"copy .env.example to .env and fill it in ({env_file})")
+    except (KeyError, SystemExit, ValueError) as e:
+        report(False, f".env: {e}", "copy .env.example to .env and fill it in; run with ATS_ROLE=<one of ATS_ROLES>")
         return
-    except FileNotFoundError as e:
-        report(False, f"project config not found: {e.filename}", "cp examples/claude-code/ats.yaml ats.yaml")
-        return
-    except Exception as e:
-        report(False, f"project config invalid: {e}", "compare your ats.yaml with examples/claude-code/ats.yaml")
-        return
-    report(True, f"environment and project config load (project {settings.config.project!r})")
-    report(bool(os.environ.get("OPENAI_API_KEY")), "OPENAI_API_KEY is set", "the scope judge needs it; add it to .env")
+    report(True, f"role {settings.role!r} loads from .env (project {settings.project_id[:8]}…)")
 
     upstream = Upstream(settings.gateway_url, settings.api_key, settings.user_id, None)
     try:
-        tools, purpose = await list_gateway(settings.gateway_url, upstream.headers)
+        tools = await list_gateway(settings.gateway_url, upstream.headers)
         report(tools > 0, f"gateway answers with {tools} tools", "add tools to the gateway in the Arcade dashboard")
-        report(bool(purpose), f"gateway has a purpose: {purpose[:60]}…" if purpose else "gateway has no purpose", "write the project's purpose into the gateway's instructions in the Arcade dashboard; until then every call is denied")
     except Exception as e:
-        hint = "set the gateway's authentication to Arcade Headers" if "401" in str(e) or "auth" in str(e).lower() else str(e)[:200]
+        hint = "set the gateway's authentication to Arcade Headers, and use this project's own API key" if "40" in str(e) or "auth" in str(e).lower() else str(e)[:200]
         report(False, "gateway rejected the connection", hint)
 
-    error = await judge_error()
+    try:
+        purpose = read_purpose(settings)
+        report(bool(purpose), f"purpose (gateway instructions): {purpose[:60]}…" if purpose else "the gateway has no instructions", "write the project's purpose into the gateway's \"Guide your agent\" instructions in the Arcade dashboard; until then every call is denied")
+    except Exception as e:
+        report(False, "could not read the gateway's instructions", str(e)[:200])
+
+    error = await judge_error(settings.openai_api_key)
     report(error is None, "scope judge answers (OpenAI Decisions API, gpt-6-luna)", f"the key needs Decisions API access: {error}")
 
     claude = shutil.which("claude")
     if not claude:
-        print("· Claude Code not found: `uv run ats-demo` runs the same vetter without it")
+        print("· Claude Code not found: `ATS_ROLE=meeting-scheduler uv run ats-demo` runs the same vetter without it")
         return
     version = re.search(r"(\d+)\.(\d+)\.(\d+)", subprocess.run([claude, "--version"], capture_output=True, text=True).stdout)
     found = tuple(map(int, version.groups())) if version else (0, 0, 0)

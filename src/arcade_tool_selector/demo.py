@@ -18,7 +18,7 @@ from arcade_tool_selector.cards import build_cards
 from arcade_tool_selector.catalog import CatalogStore
 from arcade_tool_selector.claude_code.runtime import PromptSubmitted, VetRequest, ask_proxy
 from arcade_tool_selector.policy import Decision
-from arcade_tool_selector.settings import REPO_ROOT, load_env, load_settings
+from arcade_tool_selector.settings import REPO_ROOT, load_settings
 
 MARKS = {"allow": "✓ allow", "ask": "? ask  ", "deny": "✗ deny "}
 
@@ -65,14 +65,13 @@ def summarize(result) -> str:
 
 
 async def run() -> None:
-    load_env()
     settings = load_settings()
-    if settings.config.project != "meeting-scheduler":
-        sys.exit(f"ats-demo replays a meeting-scheduler script; run it with ATS_ROLE=meeting-scheduler (got {settings.config.project!r})")
+    if settings.role != "meeting-scheduler":
+        sys.exit(f"ats-demo replays a meeting-scheduler script; run it with ATS_ROLE=meeting-scheduler (got {settings.role!r})")
     root = settings.data_dir
     domain = settings.user_id.rsplit("@", 1)[-1]
     params = StdioServerParameters(command="uv", args=["run", "--project", str(REPO_ROOT), "ats-proxy"], env=dict(os.environ))
-    print("Project: meeting-scheduler (its purpose is the gateway's instructions in the Arcade dashboard)\n")
+    print("Role: meeting-scheduler (its purpose is its gateway's instructions in the Arcade dashboard)\n")
 
     async with stdio_client(params, errlog=open(os.devnull, "w")) as (read, write), ClientSession(read, write) as session:
         await session.initialize()

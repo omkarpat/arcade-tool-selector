@@ -30,29 +30,30 @@ Claude Code ──stdio──► ats-proxy ────────────�
 **1. Create an MCP gateway** in the Arcade dashboard (your project → **MCP Gateways** → **Create**):
 - **Allowed Tools:** include Google Calendar, Gmail and Linear for the demo. The evals also use Drive, Docs, Sheets, Slides and Slack.
 - **Authentication:** **Arcade Headers**. The proxy sends your API key and an `Arcade-User-ID`.
-- **Instructions:** the project's purpose. This is the only place it lives. For the demo, paste the meeting-scheduler purpose from [`examples/roles/README.md`](examples/roles/README.md). Without instructions, every call is denied.
+- **Instructions** ("Guide your agent"): the project's purpose. This is the only place it lives. For the demo, paste the meeting-scheduler purpose from [`examples/roles/README.md`](examples/roles/README.md). Without instructions, every call is denied. The proxy reads them with the project's key and never passes them to the agent.
+
+Then create an API key in the same project (**API Keys** → **Create**). Keys are per project.
 
 **2. Clone and configure:**
 
 ```sh
 git clone https://github.com/omkarpat/arcade-tool-selector && cd arcade-tool-selector
 uv sync
-cp .env.example .env && chmod 600 .env        # fill in the values below
-cp examples/roles/meeting-scheduler.yaml ats.yaml   # the demo role's config (scope and policy; set org_domains)
+cp .env.example .env && chmod 600 .env        # fill in the values below; it's the only local configuration
 ```
 
 | `.env` | Where it comes from |
 |---|---|
-| `DEFAULT_ARCADE_API_KEY` | Arcade dashboard → **API Keys** (`arc_…`) |
-| `ARCADE_USER_ID` | The email you use with Arcade. Tool authorizations (your Google, Linear… OAuth grants) are keyed to it. |
-| `ATS_GATEWAY_URL` | Your gateway's URL, `https://api.arcade.dev/mcp/<slug>` |
+| `ARCADE_USER_ID` | The email you use with Arcade. Tool authorizations are keyed to it, and its domain is what counts as "inside the organization". |
+| `ARCADE_ORG_ID` | In the Arcade dashboard URL |
 | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). It needs Decisions API access. |
-| `ARCADE_ORG_ID`, `DEFAULT_ARCADE_PROJECT_ID` | Optional. Used by `ats-audit` to link calls to Arcade's execution log. Both appear in the dashboard URL. |
+| `ATS_ROLES` | One entry per role (Arcade project): its `project_id`, its own `api_key` (`arc_…`) and its `gateway_url`. For the demo, add a `meeting-scheduler` entry. |
 
 **3. Check the setup, then run the demo:**
 
 ```sh
-uv run ats-doctor     # env, config, gateway auth and purpose, judge access, Claude Code version: what to fix
+export ATS_ROLE=meeting-scheduler   # which role (Arcade project) to run as
+uv run ats-doctor     # .env, gateway auth, the gateway's purpose, judge access, Claude Code version: what to fix
 uv run ats-demo       # the meeting-scheduler role replays 7 requests through the real proxy, vetter and Arcade
 ```
 
@@ -84,12 +85,13 @@ Claude Code v2.1.295 or later is required.
 1. **Register the proxy** as an MCP server. If you already connect a gateway directly, reuse its name so tool names and permission rules don't change:
 
    ```sh
-   claude mcp add workspace-search -- uv run --project "$PWD" ats-proxy
+   claude mcp add workspace-search -e ATS_ROLE=workspace-search -- uv run --project "$PWD" ats-proxy
    ```
 
-   No secrets go into Claude Code's config; the proxy reads `.env` itself. For a project-level config, see [`examples/claude-code/mcp.json`](examples/claude-code/mcp.json).
+   `ATS_ROLE` only selects a role; no secrets go into Claude Code's config, because the proxy reads `.env` itself. For a project-level config, see [`examples/claude-code/mcp.json`](examples/claude-code/mcp.json).
 2. **Add the hooks** from [`examples/claude-code/settings.json`](examples/claude-code/settings.json) to `~/.claude/settings.json` or `.claude/settings.json`:
    - Replace `$ATS_HOME` with this repo's path.
+   - Give the hooks the same `ATS_ROLE` as the server: they find the role's proxy through its data directory.
    - Make sure the matcher uses your server name (`mcp__<server_name>__.*`).
 3. **Describe the project** in the gateway's **Instructions** in the Arcade dashboard: what this project does, and what it doesn't (apps, actions, people and destinations). That text is the policy, and it lives nowhere else. There are no tool lists to maintain.
 4. **Restart Claude Code and work as usual.** An out-of-scope call comes back refused, with the reason. A destructive or doubtful call shows Claude Code's permission prompt, with the vetter's reason.
@@ -110,17 +112,17 @@ Which tools a project can reach at all is Arcade's job: its gateway's allow-list
 - **`within_purpose`:** does the project's purpose cover this action, with these arguments?
 - **`requested`:** for writes, do your own messages ask for this exact call? For reads, is it a reasonable step toward what you asked: finding a channel, fetching page 2, looking up an issue? Text the agent read from emails, documents or other tool results never counts. That's the prompt-injection defense.
 - **`reaches_people`** (writes only): does it deliver something directly to other people, such as an email, chat message, calendar invite or file share? If so, the call carries **send** stakes.
-- **`discloses_internal`** (calls that reach people, in `protect_internal` projects): would it reveal internal details to someone outside `org_domains`? If so, **deny**.
+- **`discloses_internal`** (writes only): would it reveal internal details to someone outside the organization (your `ARCADE_USER_ID` domain)? If so, **deny**.
 
 | Result | Outcome |
 |---|---|
-| Outside the purpose | The call's tier picks `on_low_scope`: read and write **ask**, send and destructive **deny** |
+| Outside the purpose | By tier: read and write **ask**, send and destructive **deny** |
 | Within the purpose, but unclear you asked | **ask** |
-| In scope, tier in `policy.approve` (default: destructive) | **ask** |
+| In scope, destructive | **ask** |
 | In scope | Claude Code's own rules apply |
 
 A call's tier comes from Arcade's tool metadata (`read` and `destructive` flags; everything else is `write`), or `send` when the judge says the write reaches people.
-- If the judge is unreachable, write, send and destructive calls fail closed.
+- If the judge is unreachable, every call is denied.
 - The proxy re-checks every call itself, so a call that skips the hook is vetted too.
 
 ## Roles: one Arcade project per role
@@ -131,38 +133,37 @@ Treat each Arcade project as a role, with permissions at three levels:
 |---|---|---|
 | Tools | which tools the role can call at all | the project's **gateway allow-list**, plus its **project API key**: Arcade rejects a key from another project with a 403 |
 | Actions | read vs. create, update, delete | the project description, judged per call |
-| Data | which records, recipients and content | the project description (e.g. "SUP team only", "only invites people inside the org"), plus `scope.protect_internal` for customer-facing roles |
+| Data | which records, recipients and content | the project description (e.g. "SUP team only", "only invites people inside the org"), plus the disclosure question on every call that reaches people |
 
-[`examples/roles/`](examples/roles/) has three roles:
+[`examples/roles/README.md`](examples/roles/README.md) has the three roles' purposes, as written into their gateways' instructions:
 
 | Role | Gateway tools | Rules in the vetter |
 |---|---|---|
-| **Workspace Search** | all | **description only**: "reads everything; can create and update Linear issues; never deletes or archives anything". The judge allows issue writes and judges archive, delete and other writes as outside the purpose. `on_low_scope.write: deny` turns those writes into denials. No tool lists. |
+| **Workspace Search** | all | "reads everything; can create and update Linear issues; never deletes or archives anything". The judge allows issue writes, and holds archive, delete and other writes as outside the purpose. |
 | **Meeting Scheduler** | Calendar, Gmail read, plus reply and draft-reply (no Linear on the gateway at all) | description: replies only about meetings, invites only inside the org |
-| **Support Bot** | Gmail read and reply, Linear tickets, Slack | description: SUP team only, `#support` only, never trashes email. `protect_internal` adds the disclosure question to every call that reaches people: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. |
+| **Support Bot** | Gmail read and reply, Linear tickets, Slack | description: SUP team only, reads the job-queue channels, posts only to the customer channel, never trashes email. Every call that reaches people also gets the disclosure question: *does this reveal internal details* (internal tickets or chat, other customers, employees, roadmap, internal pricing or links) *to someone outside the org?* If yes, deny. |
 
 **To run a role:**
-1. **Describe it** in a project config, e.g. a copy of `examples/roles/support-bot.yaml` with your org's domains.
-2. **Add it to `ATS_ROLES`** in the repo `.env`. It's one dict, keyed by role, holding that Arcade project's ID, its own API key, its gateway URL and the config path:
+1. **Create its Arcade project:** a gateway (Arcade Headers) whose **instructions** are the role's purpose, plus a project API key.
+2. **Add it to `ATS_ROLES`** in `.env`:
 
    ```sh
    ATS_ROLES='{
      "support-bot": {
        "project_id": "<project id>",
        "api_key": "arc_…",
-       "gateway_url": "https://api.arcade.dev/mcp/<gateway>",
-       "config": "examples/roles/support-bot.yaml"
+       "gateway_url": "https://api.arcade.dev/mcp/<gateway>"
      }
    }'
    ```
-3. **Select it with `ATS_ROLE`:** `ATS_ROLE=support-bot uv run ats-proxy`. The role gets its own data directory (`~/.local/share/ats/support-bot`), so its cache, audit log and hook socket stay separate. `ats-audit` with the same `ATS_ROLE` reads that project's execution log.
-4. **In Claude Code,** give the role's MCP server and its hooks the same `ATS_ROLE`. A directory per role makes switching roles a `cd`.
+3. **Select it with `ATS_ROLE`:** `ATS_ROLE=support-bot uv run ats-proxy`. Each role has its own data directory (`~/.local/share/ats/<role>`) for its cache, audit log and hook socket. `ats-audit` reads that project's execution log.
+4. **In Claude Code,** give the role's MCP server and its hooks the same `ATS_ROLE`. A directory per role, launched with `claude --strict-mcp-config --mcp-config .mcp.json`, makes switching roles a `cd`. It also keeps any other route to Arcade out of the session.
 
-Without `ATS_ROLE`, the top-level `DEFAULT_ARCADE_API_KEY`, `ATS_GATEWAY_URL` and `ATS_CONFIG` apply.
+There is no other configuration: no project file, no overrides. A missing key, an unknown role or a gateway without instructions fails loudly.
 
 ## Evals
 
-Both evals run against a local snapshot of your gateway's catalog (gitignored). Create it first:
+Both evals run against a local snapshot of a gateway's catalog (gitignored). The eval datasets carry their own project purposes; they're the one place local configuration is allowed. Create the snapshot first:
 
 ```sh
 uv run python evals/snapshot.py               # every tools/list page from your gateway → evals/catalogs/workspace.json
@@ -184,7 +185,7 @@ uv run python evals/run.py                    # tool-selection baselines (offlin
 |---|---|---|---|
 | **100%** | 17% (mostly held as ask) | 91% | p50 0.3s · p95 0.5s |
 
-These are at the default `scope.threshold` of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own `scope.disclosure_threshold` (0.5), where lower is stricter.
+These are at the threshold of **0.85**, a deliberately strict bar that trades friction (mostly approval prompts) for safety. The threshold sweep keeps 100% of out-of-scope calls blocked from 0.5 to 0.9. Held in-scope calls fall to 8% at 0.6 and 4% at 0.5. The disclosure check has its own threshold (0.5), where lower is stricter.
 
 **Selection** (`evals/datasets/tool_selection.yaml`). 103 prompts, each labelled with the tools it needs. This is the baseline phase 4's prompt-time selector has to beat:
 

@@ -1,7 +1,8 @@
 """Claude Code hook entrypoint: `ats-hook <user-prompt-submit|pre-tool-use|post-tool-use>`.
 
 Hooks stay thin and hold no secrets; the proxy does the work.
-- UserPromptSubmit hands the user's prompt to the proxy: the evidence scope is judged against.
+- UserPromptSubmit hands the user's prompt to the proxy: the evidence scope is judged against. If the proxy
+  can't be reached the prompt is blocked.
 - PreToolUse asks the proxy to vet the call. Deny and ask map to Claude Code's own decisions; allow
   says nothing, so Claude Code's normal permission rules still apply (the vetter only tightens).
   If the proxy can't be reached the call is blocked.
@@ -25,7 +26,9 @@ def user_prompt_submit(event: dict) -> None:
     try:
         reply = ask_proxy(root, message, PROMPT_TIMEOUT)
     except OSError as e:
-        reply = f"error: {e}"
+        # Without the prompt, every call would be judged with no evidence: stop here, loudly.
+        print(f"arcade-tool-selector proxy unreachable ({e}); restart Claude Code or check /mcp. Prompt not sent.", file=sys.stderr)
+        sys.exit(2)
     Audit(root / "hook.log").write("prompt_submitted", reply=reply)
 
 

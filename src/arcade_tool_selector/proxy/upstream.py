@@ -15,15 +15,6 @@ logging.getLogger("mcp.client.streamable_http").setLevel(logging.ERROR)
 CONNECT_TIMEOUT = 30
 
 
-# Arcade's own block (authorization guidance, connected apps) ends here; the gateway's own instructions follow.
-ARCADE_BLOCK_END = "</available_apps>"
-
-
-def gateway_purpose(instructions: str) -> str:
-    """The gateway's own instructions, as typed in the Arcade dashboard, without Arcade's built-in block."""
-    return instructions.rpartition(ARCADE_BLOCK_END)[2].strip()
-
-
 class Upstream:
     """Long-lived MCP client session to the Arcade gateway, reconnecting on failure."""
 
@@ -37,7 +28,6 @@ class Upstream:
         }
         self.on_tools_changed = on_tools_changed
         self._session: ClientSession | None = None
-        self.purpose = ""  # the gateway's instructions: the project purpose calls are judged against
         self._connected = anyio.Event()
         self._dropped = anyio.Event()
 
@@ -50,7 +40,7 @@ class Upstream:
                     streamable_http_client(self.url, http_client=http) as (read, write),
                     ClientSession(read, write, message_handler=self._on_message) as session,
                 ):
-                    self.purpose = gateway_purpose((await session.initialize()).instructions or "")
+                    await session.initialize()
                     logger.info("connected to gateway")
                     backoff = 1.0
                     self._dropped = anyio.Event()
@@ -62,11 +52,6 @@ class Upstream:
             self._drop()
             await anyio.sleep(backoff)
             backoff = min(backoff * 2, 60)
-
-    async def gateway_purpose(self) -> str:
-        """The gateway's instructions, once connected: a warm start can serve hooks before the gateway answers."""
-        await self._get_session()
-        return self.purpose
 
     async def list_tools(self) -> list[types.Tool]:
         """Every page of the gateway's tools/list. Retried once on a dropped connection."""

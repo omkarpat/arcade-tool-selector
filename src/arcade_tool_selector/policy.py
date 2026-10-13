@@ -3,7 +3,7 @@
 The project description is the policy. One Decisions API call per tool call answers:
 - within_purpose / requested: is this exact call within the purpose, and did the user ask for it?
 - reaches_people (writes only): does it send, share or notify anyone besides the user? Then it carries send stakes.
-- discloses_internal (protected projects, writes only): would it reveal internal details outside the organization?
+- discloses_internal (writes only): would it reveal internal details to people outside the organization?
 Evidence is the project prompt and the user's own messages, never tool output.
 The call's tier (Arcade's read/destructive flags, or send when it reaches people) sets the stakes.
 Which tools a project can reach at all is Arcade's job: gateway allow-lists and project-scoped keys.
@@ -50,7 +50,7 @@ REACHES_PEOPLE_QUESTION = (
     "comments, documents, labels or folders, even if the tool notifies its own members."
 )
 
-# Customer-facing projects (`protect_internal`): the data-level rule.
+# Every project: internal details never go to people outside the organization.
 DISCLOSURE_QUESTION = (
     "Does this call send internal organization details to anyone outside the organization? Internal details include "
     "internal tickets or their discussion, internal chat, other customers' information, employee information, "
@@ -63,15 +63,18 @@ SEND_FROM = 0.5
 
 
 class ScopeConfig(BaseModel):
+    """Fixed in code (set from the scope eval); only org_domains varies, derived from the user's email."""
+
     model_config = ConfigDict(extra="forbid")
 
     threshold: float = 0.85  # purpose and requested must both reach this; lower answers ask or deny
     disclosure_threshold: float = 0.5  # deny when P(reveals internal details) reaches this: lower is stricter
     org_domains: list[str] = []  # who counts as inside the organization
-    protect_internal: bool = False  # calls that reach people must not reveal internal details outside org_domains
 
 
 class PolicyConfig(BaseModel):
+    """Fixed in code: what each tier's stakes mean."""
+
     model_config = ConfigDict(extra="forbid")
 
     approve: list[Tier] = ["destructive"]  # in-scope calls in these tiers still ask the user
@@ -79,7 +82,7 @@ class PolicyConfig(BaseModel):
 
 
 class Evidence(BaseModel):
-    project_prompt: str
+    purpose: str
     user_messages: list[str]
 
 
@@ -104,8 +107,8 @@ class Vetter:
         self.judge = judge
 
     async def vet(self, tool: str, arguments: dict, evidence: Evidence) -> Decision:
-        if not evidence.project_prompt.strip():
-            return Decision(action="deny", check="no_purpose", reason="This project has no purpose: write it into the gateway's instructions in the Arcade dashboard.")
+        if not evidence.purpose.strip():
+            return Decision(action="deny", check="no_purpose", reason="This project has no purpose: write it into its gateway's instructions (\"Guide your agent\") in the Arcade dashboard.")
         card = self.cards.get(tool)
         if card is None:
             return Decision(action="deny", check="unknown_tool", reason=f"{tool} is not a tool on this gateway.")
@@ -116,13 +119,11 @@ class Vetter:
         # Arcade flags reads and destructive tools; whether a write reaches people depends on the call.
         if tier == "write":
             questions["reaches_people"] = REACHES_PEOPLE_QUESTION
-            if self.scope.protect_internal:
-                questions["discloses_internal"] = DISCLOSURE_QUESTION
+            questions["discloses_internal"] = DISCLOSURE_QUESTION
         try:
             answers = await self.judge.predicates(_scope_input(card, arguments, evidence, self.scope.org_domains), questions)
         except Exception as e:
-            fallback = "deny" if tier != "read" else self.policy.on_low_scope["read"]
-            return Decision(action=fallback, check="judge_unavailable", tier=tier, reason=f"Scope judge unavailable ({type(e).__name__}); {tier} calls fail closed.")
+            return Decision(action="deny", check="judge_unavailable", tier=tier, reason=f"Scope judge unavailable ({type(e).__name__}: {e}); every call is denied until it answers.")
         if answers.get("reaches_people", 0.0) >= SEND_FROM:
             tier = "send"
             if (disclosure := answers.get("discloses_internal", 0.0)) >= self.scope.disclosure_threshold:
@@ -156,7 +157,7 @@ def _scope_input(card: ToolCard, arguments: dict, evidence: Evidence, org_domain
     org = f"The organization's domains: {', '.join(org_domains)}\n\n" if org_domains else ""
     return (
         f"Today: {today:%A %Y-%m-%d} ({today.tzname()})\n\n"
-        f"Project purpose:\n{evidence.project_prompt.strip()}\n\n"
+        f"Project purpose:\n{evidence.purpose.strip()}\n\n"
         f"{org}"
         f"What the user asked, in their own messages (oldest first):\n{asked}\n\n"
         f"Proposed tool call: {card.qualified_name}\n"
