@@ -9,6 +9,7 @@ Hooks stay thin and hold no secrets; the proxy does the work.
 """
 
 import json
+import os
 import sys
 
 from arcade_tool_selector.audit import Audit
@@ -48,6 +49,9 @@ def pre_tool_use(event: dict) -> None:
 
 def main() -> None:
     load_env()
+    if not os.environ.get("ATS_ROLE"):
+        print("ATS_ROLE is not set: start Claude Code as `ATS_ROLE=<role> claude` (roles: ATS_ROLES in .env). Blocked.", file=sys.stderr)
+        sys.exit(2)
     command = sys.argv[1] if len(sys.argv) > 1 else ""
     event = json.load(sys.stdin)
     if command == "user-prompt-submit":

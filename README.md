@@ -20,7 +20,7 @@ Claude Code ──stdio──► ats-proxy ────────────�
      └─ PreToolUse ─────►   vet the call: allow · ask (permission prompt) · deny
 ```
 
-## Quickstart (about 10 minutes, no Claude Code needed)
+## Quickstart (about 10 minutes)
 
 **You'll need:**
 - [`uv`](https://docs.astral.sh/uv/)
@@ -49,12 +49,13 @@ cp .env.example .env && chmod 600 .env        # fill in the values below; it's t
 | `OPENAI_API_KEY` | [platform.openai.com/api-keys](https://platform.openai.com/api-keys). It needs Decisions API access. |
 | `ATS_ROLES` | One entry per role (Arcade project): its `project_id`, its own `api_key` (`arc_…`) and its `gateway_url`. For the demo, add a `meeting-scheduler` entry. |
 
-**3. Check the setup, then run the demo:**
+**3. Try it:**
 
 ```sh
 export ATS_ROLE=meeting-scheduler   # which role (Arcade project) to run as
 uv run ats-doctor     # .env, gateway auth, the gateway's purpose, judge access, Claude Code version: what to fix
-uv run ats-demo       # the meeting-scheduler role replays 7 requests through the real proxy, vetter and Arcade
+uv run ats-demo       # replays 7 requests through the real proxy, vetter and Arcade
+claude                # Claude Code, with every call to the gateway vetted
 ```
 
 The demo sends the proxy exactly what Claude Code's hooks would send. It only executes calls that are allowed **and** read-only, so it never sends, changes or deletes anything. The first time Arcade needs a tool authorized (e.g. Google Calendar), the result is an authorization link. Open it once, then rerun.
@@ -80,29 +81,32 @@ you> Cancel my 1:1 with Jordan on Thursday.
 
 ## Use it with Claude Code
 
-Claude Code v2.1.295 or later is required.
+Claude Code v2.1.295 or later is required. The repo is a ready Claude Code project, so `ATS_ROLE=<role> claude` in it is all you need:
+- **[`.mcp.json`](.mcp.json)** registers the proxy as the `arcade` MCP server for the role you start with.
+- **[`.claude/settings.json`](.claude/settings.json)** adds the hooks. It also turns off claude.ai connectors, so the gateway is the only route to your apps, and starts in the default permission mode, so allowed calls still reach Claude Code's own prompt.
 
-1. **Register the proxy** as an MCP server. If you already connect a gateway directly, reuse its name so tool names and permission rules don't change:
+On first launch, trust the folder and approve the `arcade` server. To switch roles, restart with a different `ATS_ROLE`. Without one, every prompt is blocked with that reason.
 
-   ```sh
-   claude mcp add workspace-search -e ATS_ROLE=workspace-search -- uv run --project "$PWD" ats-proxy
-   ```
+Then work as usual. An out-of-scope call comes back refused, with the reason. A destructive or doubtful call shows Claude Code's permission prompt, with the vetter's reason. To watch the decisions:
 
-   `ATS_ROLE` only selects a role; no secrets go into Claude Code's config, because the proxy reads `.env` itself. For a project-level config, see [`examples/claude-code/mcp.json`](examples/claude-code/mcp.json).
-2. **Add the hooks** from [`examples/claude-code/settings.json`](examples/claude-code/settings.json) to `~/.claude/settings.json` or `.claude/settings.json`:
-   - Replace `$ATS_HOME` with this repo's path.
-   - Give the hooks the same `ATS_ROLE` as the server: they find the role's proxy through its data directory.
-   - Make sure the matcher uses your server name (`mcp__<server_name>__.*`).
-3. **Describe the project** in the gateway's **Instructions** in the Arcade dashboard: what this project does, and what it doesn't (apps, actions, people and destinations). That text is the policy, and it lives nowhere else. There are no tool lists to maintain.
-4. **Restart Claude Code and work as usual.** An out-of-scope call comes back refused, with the reason. A destructive or doubtful call shows Claude Code's permission prompt, with the vetter's reason.
+```sh
+tail -f ~/.local/share/ats/$ATS_ROLE/audit.jsonl | jq -c 'select(.event=="vetted") | {tool, action, check, reason}'
+```
 
 | Hook | What it does |
 |---|---|
 | `UserPromptSubmit` | Hands your prompt to the proxy. It's the evidence calls are judged against, and it's kept in memory only. |
 | `PreToolUse` | Asks the proxy to vet the call. **Deny** and **ask** map to Claude Code's own decisions. **Allow** says nothing, so Claude Code's permission rules still apply: the vetter only tightens. If the proxy is unreachable, the call is blocked (`onFailure: block`). |
-| `PostToolUse` | Reserved for result redaction; it's a no-op today. |
 
-**To roll back:** `claude mcp remove workspace-search`, re-add your gateway URL with `--transport http`, then remove the hooks.
+The vetter guards calls to the gateway only. Claude Code's built-in tools (Bash, WebFetch, …) keep their usual permission prompts.
+
+**In another project.** To put an existing project's gateway behind the proxy, register it under that gateway's server name, so tool names and permission rules don't change:
+
+```sh
+claude mcp add workspace-search -e ATS_ROLE=workspace-search -- uv run --project /path/to/arcade-tool-selector ats-proxy
+```
+
+Then add the hooks from [`examples/claude-code/settings.json`](examples/claude-code/settings.json), with `$ATS_HOME` set to this repo's path and the matcher set to your server name. **To roll back:** `claude mcp remove workspace-search`, re-add your gateway URL with `--transport http`, then remove the hooks.
 
 ## How a call is decided
 
@@ -157,7 +161,7 @@ Treat each Arcade project as a role, with permissions at three levels:
    }'
    ```
 3. **Select it with `ATS_ROLE`:** `ATS_ROLE=support-bot uv run ats-proxy`. Each role has its own data directory (`~/.local/share/ats/<role>`) for its cache, audit log and hook socket. `ats-audit` reads that project's execution log.
-4. **In Claude Code,** give the role's MCP server and its hooks the same `ATS_ROLE`. A directory per role, launched with `claude --strict-mcp-config --mcp-config .mcp.json`, makes switching roles a `cd`. It also keeps any other route to Arcade out of the session.
+4. **Start Claude Code as the role:** `ATS_ROLE=support-bot claude` in this repo. Claude.ai connectors are off there, so the role's gateway is the only route to your apps.
 
 There is no other configuration: no project file, no overrides. A missing key, an unknown role or a gateway without instructions fails loudly.
 
